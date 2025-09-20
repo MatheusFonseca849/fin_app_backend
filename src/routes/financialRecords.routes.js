@@ -3,39 +3,17 @@ const router = require('express').Router();
 const { findUserById } = require('../data/userData');
 const multer = require('multer');
 const { parse } = require('csv-parse/sync');
+const createError = require('../middlewares/createError');
+const validateUserExists = require('../middlewares/userValidation');
 
-// Configure multer for in-memory storage
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Get all transactions for a specific user
-router.get('/', (req, res) => {
-    const { userId } = req.query;
-    
-    if (!userId) {
-        return res.status(400).json({ message: 'userId query parameter is required' });
-    }
-    
-    const user = findUserById(userId);
-    
-    if (!user) {
-        return res.status(404).json({ message: 'User not found' });
-    }
-    
-    res.json(user.transactions || []);
+router.get('/', validateUserExists, (req, res) => {
+    res.json(req.user.transactions || []);
 });
 
-router.post('/', (req, res) => {
-    const { description, value, type, category, userId } = req.body;
-    
-    if (!userId) {
-        return res.status(400).json({ message: 'userId is required' });
-    }
-    
-    const user = findUserById(userId);
-    
-    if (!user) {
-        return res.status(404).json({ message: 'User not found' });
-    }
+router.post('/', validateUserExists, (req, res) => {
+    const { description, value, type, category } = req.body;
     
     const financialRecord = {
         id: uuidv4(),
@@ -44,114 +22,78 @@ router.post('/', (req, res) => {
         value,
         type,
         category,
-        userId
+        userId: req.user.id
     };
     
-    user.transactions.push(financialRecord);
+    req.user.transactions.push(financialRecord);
     res.status(201).json(financialRecord);
 });
 
-router.get('/:id', (req, res) => {
+router.get('/:id', validateUserExists, (req, res) => {
     const { id } = req.params;
-    const { userId } = req.query;
-    
-    if (!userId) {
-        return res.status(400).json({ message: 'userId query parameter is required' });
-    }
-    
-    const user = findUserById(userId);
-    
-    if (!user) {
-        return res.status(404).json({ message: 'User not found' });
-    }
-    
-    const financialRecord = user.transactions.find(record => record.id === id);
-    
+    const financialRecord = req.user.transactions.find(record => record.id === id);
     if (!financialRecord) {
-        return res.status(404).json({ message: 'Transaction not found' });
+        return res.status(404).json(createError(404, 'Transaction not found'));
     }
-    
     res.status(200).json(financialRecord);
 });
 
-router.put('/:id', (req, res) => {
+router.put('/:id', validateUserExists, (req, res) => {
     const { id } = req.params;
-    const { description, value, type, category, userId } = req.body;
+    const { description, value, type, category, date } = req.body;
     
-    if (!userId) {
-        return res.status(400).json({ message: 'userId is required' });
-    }
-    
-    const user = findUserById(userId);
-    
-    if (!user) {
-        return res.status(404).json({ message: 'User not found' });
-    }
-    
-    const financialRecord = user.transactions.find(record => record.id === id);
+    const financialRecord = req.user.transactions.find(record => record.id === id);
     
     if (!financialRecord) {
-        return res.status(404).json({ message: 'Transaction not found' });
+        return res.status(404).json(createError(404, 'Transaction not found'));
     }
     
     if (description !== undefined) financialRecord.description = description;
     if (value !== undefined) financialRecord.value = value;
     if (type !== undefined) financialRecord.type = type;
     if (category !== undefined) financialRecord.category = category;
+    if (date !== undefined) financialRecord.timestamp = new Date(date);
     
     return res.status(200).json(financialRecord);
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', validateUserExists, (req, res) => {
     const { id } = req.params;
-    const { userId } = req.query;
     
-    if (!userId) {
-        return res.status(400).json({ message: 'userId query parameter is required' });
-    }
-    
-    const user = findUserById(userId);
-    
-    if (!user) {
-        return res.status(404).json({ message: 'User not found' });
-    }
-    
-    const recordToDelete = user.transactions.find(record => record.id === id);
+    const recordToDelete = req.user.transactions.find(record => record.id === id);
     
     if (!recordToDelete) {
-        return res.status(404).json({ message: 'Transaction not found' });
+        return res.status(404).json(createError(404, 'Transaction not found'));
     }
     
-    user.transactions = user.transactions.filter(record => record.id !== id);
+    req.user.transactions = req.user.transactions.filter(record => record.id !== id);
     
     res.status(200).json({ message: 'Transaction deleted successfully' });
 });
 
-module.exports = router;
-
-// CSV Import: POST /records/import
 // Accepts multipart/form-data with fields:
 // - file: CSV file with headers [date, type, category, description, amount]
-// - userId: the target user id
-router.post('/import', upload.single('file'), (req, res) => {
+router.post('/import', upload.any(), (req, res) => {
     try {
-        const { userId } = req.body;
 
+        const { userId } = req.body;
+        
         if (!userId) {
-            return res.status(400).json({ message: 'userId is required' });
+            return res.status(400).json(createError(400, 'userId is required'));
         }
 
         const user = findUserById(userId);
         if (!user) {
-            return res.status(404).json({ message: 'User not found' });
+            return res.status(404).json(createError(404, 'User not found'));
         }
 
-        if (!req.file || !req.file.buffer) {
-            return res.status(400).json({ message: 'CSV file is required' });
+        const uploadedFile = req.files && req.files.find(f => f.fieldname === 'file');
+        if (!uploadedFile || !uploadedFile.buffer) {
+            return res.status(400).json(createError(400, 'CSV file is required'));
         }
 
-        const csvString = req.file.buffer.toString('utf-8');
-        // Parse CSV with headers
+        const csvString = uploadedFile.buffer.toString('utf-8');
+
         const records = parse(csvString, {
             columns: true,
             skip_empty_lines: true,
@@ -165,7 +107,7 @@ router.post('/import', upload.single('file'), (req, res) => {
             try {
                 const description = row.description || row.Descricao || row.Descrição || '';
                 const rawAmount = row.amount ?? row.valor ?? row.value;
-                const type = (row.type || row.tipo || '').toString().toLowerCase(); // 'credito' or 'debito'
+                const type = (row.type || row.tipo || '').toString().toLowerCase();
                 const category = (row.category || row.categoria || '').toString();
                 const dateStr = row.date || row.data;
 
@@ -183,7 +125,6 @@ router.post('/import', upload.single('file'), (req, res) => {
                     throw new Error('Invalid date');
                 }
 
-                // Enforce app convention: positive for credito, negative for debito
                 const value = (type === 'credito') ? Math.abs(amount) : -Math.abs(amount);
                 if (type !== 'credito' && type !== 'debito') {
                     throw new Error("Type must be 'credito' or 'debito'");
@@ -196,7 +137,7 @@ router.post('/import', upload.single('file'), (req, res) => {
                     value,
                     type,
                     category,
-                    userId
+                    userId: user.id
                 };
                 user.transactions.push(record);
                 created.push(record);
@@ -208,6 +149,8 @@ router.post('/import', upload.single('file'), (req, res) => {
         return res.status(201).json({ createdCount: created.length, errorCount: errors.length, errors, records: created });
     } catch (err) {
         console.error('CSV import failed:', err);
-        return res.status(500).json({ message: 'Failed to import CSV', error: err.message });
+        return res.status(500).json(createError(500, 'Failed to import CSV', err.message));
     }
 });
+
+module.exports = router;

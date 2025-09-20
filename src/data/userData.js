@@ -2,7 +2,8 @@ const { v4: uuidv4 } = require('uuid');
 
 // Create user with proper userId references
 const createMockUser = () => {
-    const userId = uuidv4();
+    // Use fixed ID so frontend can consistently access the user
+    const userId = '317f632f-6149-4f77-aa02-1af65cad1750';
     return {
         id: userId,
         name: 'Matheus Fonseca',
