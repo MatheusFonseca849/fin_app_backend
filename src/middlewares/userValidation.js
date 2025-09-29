@@ -15,13 +15,13 @@ const validateUserExists = (req, res, next) => {
     }
     
     if (!userId) {
-        return res.status(400).json(createError(400, 'userId is required'));
+        return res.status(400).json(createError(400, 'userId é obrigatório'));
     }
     
     const user = findUserById(userId);
     
     if (!user) {
-        return res.status(404).json(createError(404, 'User not found'));
+        return res.status(404).json(createError(404, 'Usuário não encontrado'));
     }
     
     req.user = user; // Attach user to request

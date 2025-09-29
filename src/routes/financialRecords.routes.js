@@ -15,6 +15,19 @@ router.get('/', validateUserExists, (req, res) => {
 router.post('/', validateUserExists, (req, res) => {
     const { description, value, type, category } = req.body;
     
+    // Validate category exists for user
+    if (!req.user.categories) {
+        req.user.categories = [];
+    }
+    
+    const categoryExists = req.user.categories.find(cat => 
+        cat.name === category || cat.id === category
+    );
+    
+    if (!categoryExists) {
+        return res.status(400).json(createError(400, 'Categoria não encontrada'));
+    }
+    
     const financialRecord = {
         id: uuidv4(),
         timestamp: new Date(),
@@ -33,7 +46,7 @@ router.get('/:id', validateUserExists, (req, res) => {
     const { id } = req.params;
     const financialRecord = req.user.transactions.find(record => record.id === id);
     if (!financialRecord) {
-        return res.status(404).json(createError(404, 'Transaction not found'));
+        return res.status(404).json(createError(404, 'Transação não encontrada'));
     }
     res.status(200).json(financialRecord);
 });
@@ -45,7 +58,22 @@ router.put('/:id', validateUserExists, (req, res) => {
     const financialRecord = req.user.transactions.find(record => record.id === id);
     
     if (!financialRecord) {
-        return res.status(404).json(createError(404, 'Transaction not found'));
+        return res.status(404).json(createError(404, 'Transação não encontrada'));
+    }
+    
+    // Validate category if it's being updated
+    if (category !== undefined) {
+        if (!req.user.categories) {
+            req.user.categories = [];
+        }
+        
+        const categoryExists = req.user.categories.find(cat => 
+            cat.name === category || cat.id === category
+        );
+        
+        if (!categoryExists) {
+            return res.status(400).json(createError(400, 'Categoria não encontrada'));
+        }
     }
     
     if (description !== undefined) financialRecord.description = description;
@@ -63,12 +91,12 @@ router.delete('/:id', validateUserExists, (req, res) => {
     const recordToDelete = req.user.transactions.find(record => record.id === id);
     
     if (!recordToDelete) {
-        return res.status(404).json(createError(404, 'Transaction not found'));
+        return res.status(404).json(createError(404, 'Transação não encontrada'));
     }
     
     req.user.transactions = req.user.transactions.filter(record => record.id !== id);
     
-    res.status(200).json({ message: 'Transaction deleted successfully' });
+    res.status(200).json({ message: 'Transação excluída com sucesso' });
 });
 
 // Accepts multipart/form-data with fields:
@@ -79,17 +107,17 @@ router.post('/import', upload.any(), (req, res) => {
         const { userId } = req.body;
         
         if (!userId) {
-            return res.status(400).json(createError(400, 'userId is required'));
+            return res.status(400).json(createError(400, 'userId é obrigatório'));
         }
 
         const user = findUserById(userId);
         if (!user) {
-            return res.status(404).json(createError(404, 'User not found'));
+            return res.status(404).json(createError(404, 'Usuário não encontrado'));
         }
 
         const uploadedFile = req.files && req.files.find(f => f.fieldname === 'file');
         if (!uploadedFile || !uploadedFile.buffer) {
-            return res.status(400).json(createError(400, 'CSV file is required'));
+            return res.status(400).json(createError(400, 'Arquivo CSV é obrigatório'));
         }
 
         const csvString = uploadedFile.buffer.toString('utf-8');
@@ -112,22 +140,22 @@ router.post('/import', upload.any(), (req, res) => {
                 const dateStr = row.date || row.data;
 
                 if (!rawAmount || !type || !category || !dateStr) {
-                    throw new Error('Missing required fields (amount, type, category, date)');
+                    throw new Error('Faltam campos obrigatórios (amount, type, category, date)');
                 }
 
                 const amount = Number(rawAmount);
                 if (Number.isNaN(amount)) {
-                    throw new Error('Invalid amount');
+                    throw new Error('Valor inválido');
                 }
 
                 const timestamp = new Date(dateStr);
                 if (isNaN(timestamp.getTime())) {
-                    throw new Error('Invalid date');
+                    throw new Error('Data inválida');
                 }
 
                 const value = (type === 'credito') ? Math.abs(amount) : -Math.abs(amount);
                 if (type !== 'credito' && type !== 'debito') {
-                    throw new Error("Type must be 'credito' or 'debito'");
+                    throw new Error("Tipo deve ser 'credito' ou 'debito'");
                 }
 
                 const record = {
@@ -149,7 +177,7 @@ router.post('/import', upload.any(), (req, res) => {
         return res.status(201).json({ createdCount: created.length, errorCount: errors.length, errors, records: created });
     } catch (err) {
         console.error('CSV import failed:', err);
-        return res.status(500).json(createError(500, 'Failed to import CSV', err.message));
+        return res.status(500).json(createError(500, 'Falha ao importar CSV', err.message));
     }
 });
 

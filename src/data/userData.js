@@ -1,5 +1,18 @@
 const { v4: uuidv4 } = require('uuid');
 
+// Create default categories function that accepts userId
+const createDefaultCategories = (userId) => [
+    { id: uuidv4(), name: 'Alimentação', type: 'debito', color: '#FF6B6B', isDefault: true, userId },
+    { id: uuidv4(), name: 'Transporte', type: 'debito', color: '#4ECDC4', isDefault: true, userId },
+    { id: uuidv4(), name: 'Saúde', type: 'debito', color: '#45B7D1', isDefault: true, userId },
+    { id: uuidv4(), name: 'Contas', type: 'debito', color: '#FFA07A', isDefault: true, userId },
+    { id: uuidv4(), name: 'Lazer', type: 'debito', color: '#98D8C8', isDefault: true, userId },
+    { id: uuidv4(), name: 'Outros', type: 'debito', color: '#F7DC6F', isDefault: true, userId },
+    { id: uuidv4(), name: 'Salário', type: 'credito', color: '#82E0AA', isDefault: true, userId },
+    { id: uuidv4(), name: 'Freelance', type: 'credito', color: '#AED6F1', isDefault: true, userId },
+    { id: uuidv4(), name: 'Sem Categoria', type: 'debito', color: '#D5DBDB', isDefault: true, userId },
+];
+
 // Create user with proper userId references
 const createMockUser = () => {
     // Use fixed ID so frontend can consistently access the user
@@ -106,6 +119,7 @@ const createMockUser = () => {
                 userId: userId,
             },
         ],
+        categories: createDefaultCategories(userId),
     };
 };
 
@@ -116,5 +130,6 @@ module.exports = {
     setUserData: (data) => { userData = data; },
     addUser: (user) => userData.push(user),
     findUserById: (id) => userData.find(user => user.id === id),
-    findUserByEmail: (email) => userData.find(user => user.email === email)
+    findUserByEmail: (email) => userData.find(user => user.email === email),
+    createDefaultCategories: createDefaultCategories
 };

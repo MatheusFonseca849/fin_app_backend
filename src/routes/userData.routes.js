@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
-const { getUserData, addUser, findUserById, findUserByEmail } = require('../data/userData');
+const { getUserData, addUser, findUserById, findUserByEmail, createDefaultCategories } = require('../data/userData');
 const validateUserExists = require('../middlewares/userValidation');
 const createError = require('../middlewares/createError');
 
@@ -10,8 +10,9 @@ router.get('/', (req, res) => {
 
 router.post('/', (req, res) => {
     const { name, email, password } = req.body;
+    const userId = uuidv4();
     const user = {
-        id: uuidv4(),
+        id: userId,
         name,
         email,
         password,
@@ -19,6 +20,7 @@ router.post('/', (req, res) => {
         recurrentCredits: [],
         recurrentDebits: [],
         transactions: [],
+        categories: createDefaultCategories(userId),
     };
     addUser(user);
     res.status(201).json(user);
@@ -44,11 +46,11 @@ router.delete('/:id', validateUserExists, (req, res) => {
     const filteredUsers = userData.filter(user => user.id !== userToDelete.id);
 
     if (filteredUsers.length === userData.length) {
-        return res.status(404).json(createError(404, 'User not found'));
+        return res.status(404).json(createError(404, 'Usuário não encontrado'));
     }
 
     require('../data/userData').setUserData(filteredUsers);
-    res.status(200).json({ message: 'User deleted successfully' });
+    res.status(200).json({ message: 'Usuário excluído com sucesso' });
 });
 
 // Authentication endpoints
@@ -56,7 +58,7 @@ router.post('/login', (req, res) => {
     const { email, password } = req.body;
     const user = findUserByEmail(email);
     if (!user || user.password !== password) {
-        return res.status(401).json(createError(401, 'Invalid credentials'));
+        return res.status(401).json(createError(401, 'Credenciais inválidas'));
     }
     // In a real app, you'd generate a JWT token here
     const { password: _, ...userWithoutPassword } = user;
@@ -69,7 +71,7 @@ router.post('/register', (req, res) => {
     // Check if user already exists
     const existingUser = findUserByEmail(email);
     if (existingUser) {
-        return res.status(400).json(createError(400, 'User already exists'));
+        return res.status(400).json(createError(400, 'Usuário já existe'));
     }
     
     const userId = uuidv4();
@@ -82,6 +84,7 @@ router.post('/register', (req, res) => {
         recurrentCredits: [],
         recurrentDebits: [],
         transactions: [],
+        categories: createDefaultCategories(userId),
     };
     
     addUser(newUser);
