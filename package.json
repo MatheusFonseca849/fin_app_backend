@@ -1,19 +1,21 @@
 {
   "name": "fin_app_backend",
   "version": "1.0.0",
-  "description": "",
+  "description": "Backend API for Financial Management Application with category management and transaction tracking",
   "main": "server.js",
   "scripts": {
     "test": "jest --verbose",
     "dev": "nodemon server.js",
     "start": "node server.js"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["finance", "api", "express", "nodejs", "categories", "transactions"],
+  "author": "Matheus Fonseca",
   "license": "ISC",
   "dependencies": {
     "cors": "^2.8.5",
-    "express": "^5.1.0",
+    "csv-parse": "^5.5.6",
+    "express": "^4.21.1",
+    "multer": "^1.4.5-lts.1",
     "uuid": "^9.0.0"
   },
   "devDependencies": {
