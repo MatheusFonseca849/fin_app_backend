@@ -4,23 +4,26 @@ const { findUserById } = require('../data/userData');
 const multer = require('multer');
 const { parse } = require('csv-parse/sync');
 const createError = require('../middlewares/createError');
-const validateUserExists = require('../middlewares/userValidation');
+const { authenticateToken } = require('../middlewares/auth.middleware');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-router.get('/', validateUserExists, (req, res) => {
+router.get('/', authenticateToken, (req, res) => {
     res.json(req.user.transactions || []);
 });
 
-router.post('/', validateUserExists, (req, res) => {
+router.post('/', authenticateToken, (req, res) => {
     const { description, value, type, category } = req.body;
     
+    // Get the actual user object from userData to modify
+    const user = findUserById(req.user.id);
+    
     // Validate category exists for user
-    if (!req.user.categories) {
-        req.user.categories = [];
+    if (!user.categories) {
+        user.categories = [];
     }
     
-    const categoryExists = req.user.categories.find(cat => 
+    const categoryExists = user.categories.find(cat => 
         cat.name === category || cat.id === category
     );
     
@@ -35,14 +38,14 @@ router.post('/', validateUserExists, (req, res) => {
         value,
         type,
         category,
-        userId: req.user.id
+        userId: user.id
     };
     
-    req.user.transactions.push(financialRecord);
+    user.transactions.push(financialRecord);
     res.status(201).json(financialRecord);
 });
 
-router.get('/:id', validateUserExists, (req, res) => {
+router.get('/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
     const financialRecord = req.user.transactions.find(record => record.id === id);
     if (!financialRecord) {
@@ -51,11 +54,13 @@ router.get('/:id', validateUserExists, (req, res) => {
     res.status(200).json(financialRecord);
 });
 
-router.put('/:id', validateUserExists, (req, res) => {
+router.put('/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
     const { description, value, type, category, date } = req.body;
     
-    const financialRecord = req.user.transactions.find(record => record.id === id);
+    // Get the actual user object from userData to modify
+    const user = findUserById(req.user.id);
+    const financialRecord = user.transactions.find(record => record.id === id);
     
     if (!financialRecord) {
         return res.status(404).json(createError(404, 'Transação não encontrada'));
@@ -63,11 +68,11 @@ router.put('/:id', validateUserExists, (req, res) => {
     
     // Validate category if it's being updated
     if (category !== undefined) {
-        if (!req.user.categories) {
-            req.user.categories = [];
+        if (!user.categories) {
+            user.categories = [];
         }
         
-        const categoryExists = req.user.categories.find(cat => 
+        const categoryExists = user.categories.find(cat => 
             cat.name === category || cat.id === category
         );
         
@@ -85,16 +90,18 @@ router.put('/:id', validateUserExists, (req, res) => {
     return res.status(200).json(financialRecord);
 });
 
-router.delete('/:id', validateUserExists, (req, res) => {
+router.delete('/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
     
-    const recordToDelete = req.user.transactions.find(record => record.id === id);
+    // Get the actual user object from userData to modify
+    const user = findUserById(req.user.id);
+    const recordToDelete = user.transactions.find(record => record.id === id);
     
     if (!recordToDelete) {
         return res.status(404).json(createError(404, 'Transação não encontrada'));
     }
     
-    req.user.transactions = req.user.transactions.filter(record => record.id !== id);
+    user.transactions = user.transactions.filter(record => record.id !== id);
     
     res.status(200).json({ message: 'Transação excluída com sucesso' });
 });

@@ -8,13 +8,24 @@
     "dev": "nodemon server.js",
     "start": "node server.js"
   },
-  "keywords": ["finance", "api", "express", "nodejs", "categories", "transactions"],
+  "keywords": [
+    "finance",
+    "api",
+    "express",
+    "nodejs",
+    "categories",
+    "transactions"
+  ],
   "author": "Matheus Fonseca",
   "license": "ISC",
   "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "csv-parse": "^5.5.6",
+    "dotenv": "^17.2.3",
     "express": "^4.21.1",
+    "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
     "uuid": "^9.0.0"
   },
