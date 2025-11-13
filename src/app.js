@@ -36,4 +36,16 @@ app.get('/test-env', (req, res) => {
     });
 });
 
+app.get('/health', (req, res) => {
+  const dbStatus = require('./config/database').getStatus();
+  res.json({
+    status: 'OK',
+    database: {
+      connected: dbStatus.isConnected,
+      name: dbStatus.name
+    },
+    timestamp: new Date().toISOString()
+  });
+});
+
 module.exports = app;

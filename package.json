@@ -6,7 +6,8 @@
   "scripts": {
     "test": "jest --verbose",
     "dev": "nodemon server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "seed": "node src/scripts/seed.js"
   },
   "keywords": [
     "finance",
@@ -26,6 +27,7 @@
     "dotenv": "^17.2.3",
     "express": "^4.21.1",
     "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.19.3",
     "multer": "^1.4.5-lts.1",
     "uuid": "^9.0.0"
   },
