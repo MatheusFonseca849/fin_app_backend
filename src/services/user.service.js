@@ -83,6 +83,47 @@ class UserService {
     return { message: 'Transação excluída' };
   }
 
+  async bulkAddTransactions(userId, transactions) {
+    const user = await User.findById(userId);
+    if (!user) throw new Error('Usuário não encontrado');
+
+    let created = 0;
+    let errors = 0;
+    const errorDetails = [];
+
+    for (const transaction of transactions) {
+      try {
+        // Validate category exists
+        const categoryExists = user.findCategory(transaction.category);
+        if (!categoryExists) {
+          errors++;
+          errorDetails.push({
+            transaction,
+            error: 'Categoria não encontrada'
+          });
+          continue;
+        }
+
+        user.transactions.push(transaction);
+        created++;
+      } catch (error) {
+        errors++;
+        errorDetails.push({
+          transaction,
+          error: error.message
+        });
+      }
+    }
+
+    await user.save();
+    
+    return {
+      createdCount: created,
+      errorCount: errors,
+      errors: errorDetails
+    };
+  }
+
   // ============================================
   // Category Operations
   // ============================================

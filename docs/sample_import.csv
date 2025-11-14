@@ -1,0 +1,11 @@
+date,type,category,description,value
+2024-01-15,debito,Alimentação,Almoço no restaurante,45.50
+2024-01-16,debito,Transporte,Uber para trabalho,25.00
+2024-01-17,credito,Salário,Pagamento mensal,5000.00
+2024-01-18,debito,Saúde,Farmácia,89.90
+2024-01-19,debito,Lazer,Cinema com amigos,60.00
+2024-01-20,debito,Contas,Conta de luz,150.00
+2024-01-21,debito,Alimentação,Supermercado,320.00
+2024-01-22,debito,Transporte,Gasolina,200.00
+2024-01-23,credito,Freelance,Projeto web,1500.00
+2024-01-24,debito,Outros,Presente aniversário,120.00
