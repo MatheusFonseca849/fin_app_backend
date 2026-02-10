@@ -1,23 +1,34 @@
-const router = require('express').Router();
-const userService = require('../services/user.service');
-const { authenticateToken } = require('../middlewares/auth.middleware');
-const createError = require('../middlewares/createError');
-const multer = require('multer');
-const { parse } = require('csv-parse/sync');
+const router = require("express").Router();
+const userService = require("../services/user.service");
+const { authenticateToken } = require("../middlewares/auth.middleware");
+const createError = require("../middlewares/createError");
+const multer = require("multer");
+const { parse } = require("csv-parse/sync");
+const { 
+  createTransactionValidation, 
+  updateTransactionValidation,
+  transactionIdValidation 
+} = require('../middlewares/validators');
 
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB
+  }
+
+});
 
 /**
  * GET /records
  * Get all transactions for user
  */
-router.get('/', authenticateToken, async (req, res) => {
+router.get("/", authenticateToken, async (req, res) => {
   try {
     const transactions = await userService.getTransactions(req.user.id);
     res.json(transactions);
   } catch (error) {
-    console.error('Get transactions error:', error);
-    res.status(500).json(createError(500, 'Erro ao buscar transações'));
+    console.error("Get transactions error:", error);
+    res.status(500).json(createError(500, "Erro ao buscar transações"));
   }
 });
 
@@ -25,31 +36,29 @@ router.get('/', authenticateToken, async (req, res) => {
  * POST /records
  * Create new transaction
  */
-router.post('/', authenticateToken, async (req, res) => {
+router.post("/", authenticateToken, createTransactionValidation, async (req, res) => {
   try {
     const { description, value, type, category } = req.body;
 
     // Validate category exists
     const user = await userService.findById(req.user.id);
     const categoryExists = user.findCategory(category);
-    
+
     if (!categoryExists) {
-      return res.status(400).json(
-        createError(400, 'Categoria não encontrada')
-      );
+      return res.status(400).json(createError(400, "Categoria não encontrada"));
     }
 
     const transaction = await userService.addTransaction(req.user.id, {
       description,
       value,
       type,
-      category
+      category,
     });
 
     res.status(201).json(transaction);
   } catch (error) {
-    console.error('Create transaction error:', error);
-    res.status(500).json(createError(500, 'Erro ao criar transação'));
+    console.error("Create transaction error:", error);
+    res.status(500).json(createError(500, "Erro ao criar transação"));
   }
 });
 
@@ -60,97 +69,118 @@ router.post('/', authenticateToken, async (req, res) => {
  * date,type,category,description,value
  * 2024-01-15,debito,Alimentação,Almoço,35.50
  */
-router.post('/import', authenticateToken, upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json(
-        createError(400, 'Nenhum arquivo enviado')
-      );
-    }
-
-    // Parse CSV
-    const csvContent = req.file.buffer.toString('utf-8');
-    
-    let records;
+router.post(
+  "/import",
+  authenticateToken,
+  upload.single("file"),
+  async (req, res) => {
     try {
-      records = parse(csvContent, {
-        columns: true,
-        skip_empty_lines: true,
-        trim: true
+      if (!req.file) {
+        return res.status(400).json(createError(400, "Nenhum arquivo enviado"));
+      }
+
+      // Parse CSV
+      const csvContent = req.file.buffer.toString("utf-8");
+
+      let records;
+      try {
+        records = parse(csvContent, {
+          columns: true,
+          skip_empty_lines: true,
+          trim: true,
+        });
+      } catch (parseError) {
+        return res
+          .status(400)
+          .json(
+            createError(400, "Erro ao processar CSV: " + parseError.message),
+          );
+      }
+
+      if (!records || records.length === 0) {
+        return res
+          .status(400)
+          .json(createError(400, "Arquivo CSV vazio ou inválido"));
+      }
+
+      // Transform CSV records to transaction format
+      const transactions = records.map((record, index) => {
+        // Validate required fields
+        if (
+          !record.date ||
+          !record.type ||
+          !record.category ||
+          !record.description ||
+          !record.value
+        ) {
+          throw new Error(
+            `Linha ${index + 2}: Campos obrigatórios faltando (date, type, category, description, value)`,
+          );
+        }
+
+        // Validate type
+        if (record.type !== "credito" && record.type !== "debito") {
+          throw new Error(
+            `Linha ${index + 2}: Tipo inválido "${record.type}". Use "credito" ou "debito"`,
+          );
+        }
+
+        // Parse value and convert to cents
+        const value = parseFloat(record.value);
+        if (isNaN(value)) {
+          throw new Error(
+            `Linha ${index + 2}: Valor inválido "${record.value}"`,
+          );
+        }
+        return {
+          description: record.description,
+          value: Math.round(value * 100), // Convert to cents
+          type: record.type,
+          category: record.category,
+          timestamp: new Date(record.date),
+        };
       });
-    } catch (parseError) {
-      return res.status(400).json(
-        createError(400, 'Erro ao processar CSV: ' + parseError.message)
+
+      // Bulk add transactions
+      const result = await userService.bulkAddTransactions(
+        req.user.id,
+        transactions,
       );
+
+      res.status(201).json({
+        message: "Importação concluída",
+        createdCount: result.createdCount,
+        errorCount: result.errorCount,
+        errors: result.errors,
+      });
+    } catch (error) {
+      console.error("Import CSV error:", error);
+      res
+        .status(500)
+        .json(createError(500, error.message || "Erro ao importar CSV"));
     }
-
-    if (!records || records.length === 0) {
-      return res.status(400).json(
-        createError(400, 'Arquivo CSV vazio ou inválido')
-      );
-    }
-
-    // Transform CSV records to transaction format
-    const transactions = records.map((record, index) => {
-      // Validate required fields
-      if (!record.date || !record.type || !record.category || !record.description || !record.value) {
-        throw new Error(`Linha ${index + 2}: Campos obrigatórios faltando (date, type, category, description, value)`);
-      }
-
-      // Validate type
-      if (record.type !== 'credito' && record.type !== 'debito') {
-        throw new Error(`Linha ${index + 2}: Tipo inválido "${record.type}". Use "credito" ou "debito"`);
-      }
-
-      // Parse value
-      const value = parseFloat(record.value);
-      if (isNaN(value)) {
-        throw new Error(`Linha ${index + 2}: Valor inválido "${record.value}"`);
-      }
-
-      return {
-        description: record.description,
-        value: value,
-        type: record.type,
-        category: record.category,
-        timestamp: new Date(record.date)
-      };
-    });
-
-    // Bulk add transactions
-    const result = await userService.bulkAddTransactions(req.user.id, transactions);
-
-    res.status(201).json({
-      message: 'Importação concluída',
-      createdCount: result.createdCount,
-      errorCount: result.errorCount,
-      errors: result.errors
-    });
-  } catch (error) {
-    console.error('Import CSV error:', error);
-    res.status(500).json(createError(500, error.message || 'Erro ao importar CSV'));
-  }
-});
+  },
+);
 
 /**
  * GET /records/:id
  * Get single transaction
  */
-router.get('/:id', authenticateToken, async (req, res) => {
+router.get("/:id", authenticateToken, transactionIdValidation, async (req, res) => {
   try {
     const transactions = await userService.getTransactions(req.user.id);
-    const transaction = transactions.find(t => t._id.toString() === req.params.id);
-    
+    const transaction = transactions.find(
+      (t) => t._id.toString() === req.params.id,
+    );
+
     if (!transaction) {
-      return res.status(404).json(
-        createError(404, 'Transação não encontrada')
-      );
+      return res.status(404).json(createError(404, "Transação não encontrada"));
     }
-    
+
     res.json(transaction);
   } catch (error) {
-    console.error('Get transaction error:', error);
-    res.status(500).json(createError(500, 'Erro ao buscar transação'));
+    console.error("Get transaction error:", error);
+    res.status(500).json(createError(500, "Erro ao buscar transação"));
   }
 });
 
@@ -158,10 +188,10 @@ router.get('/:id', authenticateToken, async (req, res) => {
  * PUT /records/:id
  * Update transaction
  */
-router.put('/:id', authenticateToken, async (req, res) => {
+router.put("/:id", authenticateToken, updateTransactionValidation, async (req, res) => {
   try {
     const { description, value, type, category, date } = req.body;
-    
+
     const updates = {};
     if (description !== undefined) updates.description = description;
     if (value !== undefined) updates.value = value;
@@ -172,12 +202,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const transaction = await userService.updateTransaction(
       req.user.id,
       req.params.id,
-      updates
+      updates,
     );
 
     res.json(transaction);
   } catch (error) {
-    console.error('Update transaction error:', error);
+    console.error("Update transaction error:", error);
     res.status(500).json(createError(500, error.message));
   }
 });
@@ -186,12 +216,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
  * DELETE /records/:id
  * Delete transaction
  */
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete("/:id", authenticateToken, transactionIdValidation, async (req, res) => {
   try {
     await userService.deleteTransaction(req.user.id, req.params.id);
-    res.json({ message: 'Transação excluída com sucesso' });
+    res.json({ message: "Transação excluída com sucesso" });
   } catch (error) {
-    console.error('Delete transaction error:', error);
+    console.error("Delete transaction error:", error);
     res.status(500).json(createError(500, error.message));
   }
 });

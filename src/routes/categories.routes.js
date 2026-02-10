@@ -2,8 +2,7 @@ const router = require('express').Router();
 const userService = require('../services/user.service');
 const { authenticateToken } = require('../middlewares/auth.middleware');
 const createError = require('../middlewares/createError');
-const validateCategory = require('../middlewares/validateCategory');
-
+const { createCategoryValidation, categoryIdValidation } = require('../middlewares/validators');
 /**
  * GET /categories
  * Get all categories
@@ -22,7 +21,7 @@ router.get('/', authenticateToken, async (req, res) => {
  * POST /categories
  * Create category
  */
-router.post('/', authenticateToken, validateCategory, async (req, res) => {
+router.post('/', authenticateToken, createCategoryValidation, async (req, res) => {
   try {
     const { name, type, color } = req.body;
     
@@ -44,7 +43,7 @@ router.post('/', authenticateToken, validateCategory, async (req, res) => {
  * PUT /categories/:id
  * Update category
  */
-router.put('/:id', authenticateToken, validateCategory, async (req, res) => {
+router.put('/:id', authenticateToken, categoryIdValidation, async (req, res) => {
   try {
     const { name, type, color } = req.body;
     
@@ -65,7 +64,7 @@ router.put('/:id', authenticateToken, validateCategory, async (req, res) => {
  * DELETE /categories/:id
  * Delete category
  */
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete('/:id', authenticateToken, categoryIdValidation, async (req, res) => {
   try {
     await userService.deleteCategory(req.user.id, req.params.id);
     res.json({ 

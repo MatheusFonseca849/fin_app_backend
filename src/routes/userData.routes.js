@@ -4,6 +4,7 @@ const createError = require('../middlewares/createError');
 const { hashPassword, comparePassword, validatePasswordStrength } = require('../utils/password.utils');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt.utils');
 const { authenticateToken } = require('../middlewares/auth.middleware');
+const { registerValidation, loginValidation } = require('../middlewares/validators');
 
 // ============================================
 // PUBLIC ROUTES (No Auth Required)
@@ -13,7 +14,7 @@ const { authenticateToken } = require('../middlewares/auth.middleware');
  * POST /users/register
  * Register new user
  */
-router.post('/register', async (req, res) => {
+router.post('/register', registerValidation, async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
@@ -72,7 +73,7 @@ router.post('/register', async (req, res) => {
  * POST /users/login
  * Login user
  */
-router.post('/login', async (req, res) => {
+router.post('/login', loginValidation, async (req, res) => {
   try {
     const { email, password } = req.body;
 

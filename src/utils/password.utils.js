@@ -12,8 +12,8 @@ const comparePassword = async (password, hashedPassword) => {
 const validatePasswordStrength = (password) => {
     if (!password || password.length < 6) {
         return { 
-            valid: false, 
-            message: 'Senha deve ter no mínimo 6 caracteres' 
+            isValid: false, 
+            message: 'Password must have at least 6 characters' 
         };
     }
     
@@ -28,30 +28,30 @@ const validatePasswordStrength = (password) => {
     
     if(!hasUpperCase){
         return { 
-            valid: false, 
-            message: 'Senha deve conter pelo menos uma letra maiúscula' 
+            isValid: false, 
+            message: 'Password must contain at least one uppercase letter' 
         };
     }
     if(!hasLowerCase){
         return { 
-            valid: false, 
-            message: 'Senha deve conter pelo menos uma letra minúscula' 
+            isValid: false, 
+            message: 'Password must contain at least one lowercase letter' 
         };
     }
     if(!hasNumber){
         return { 
-            valid: false, 
-            message: 'Senha deve conter pelo menos um número' 
+            isValid: false, 
+            message: 'Password must contain at least one number' 
         };
     }
     if(!hasSpecialChar){
         return { 
-            valid: false, 
-            message: 'Senha deve conter pelo menos um caractere especial' 
+            isValid: false, 
+            message: 'Password must contain at least one special character' 
         };
     }
     
-    return { valid: true, message: 'Senha válida' };
+    return { isValid: true, message: 'Password is valid' };
 };
 
 module.exports = {

@@ -25,7 +25,7 @@ const userSchema = new mongoose.Schema({
   },
   balance: {
     type: Number,
-    default: 0
+    default: 0 // Balance in cents
   },
   
   // Embedded arrays
@@ -60,6 +60,7 @@ userSchema.index({ 'transactions.timestamp': -1 });
 // ============================================
 
 userSchema.methods.calculateBalance = function() {
+  // Returns balance in cents
   return this.transactions.reduce((sum, t) => sum + t.value, 0);
 };
 

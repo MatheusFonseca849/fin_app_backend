@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 
 
@@ -9,8 +10,15 @@ const financialRecordsRouter = require('./routes/financialRecords.routes.js');
 const userDataRouter = require('./routes/userData.routes.js');
 const categoriesRouter = require('./routes/categories.routes.js');
 const requestLogger = require('./middlewares/requestLogger');
+const { authLimiter, apiLimiter } = require('./middlewares/rateLimiter.middleware');
 
 const app = express();
+
+// Security headers
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' }, // Allow cross-origin requests for API
+  contentSecurityPolicy: false, // Disable CSP for API (frontend handles this)
+}));
 
 app.use(cors({
     origin: process.env.FRONTEND_URL || 'http://localhost:3001',
@@ -23,9 +31,15 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 app.use(requestLogger); // Move logger before routes
-app.use('/records', financialRecordsRouter);
+
+// Apply strict rate limiting to auth endpoints only
+app.use('/users/login', authLimiter);
+app.use('/users/register', authLimiter);
+
+// Apply general rate limiting to all API routes
+app.use('/records', apiLimiter, financialRecordsRouter);
 app.use('/users', userDataRouter);
-app.use('/categories', categoriesRouter);
+app.use('/categories', apiLimiter, categoriesRouter);
 
 app.get('/test-env', (req, res) => {
     res.json({

@@ -9,7 +9,8 @@ const transactionSchema = new mongoose.Schema({
   },
   value: {
     type: Number,
-    required: [true, 'Valor é obrigatório']
+    required: [true, 'Valor é obrigatório'],
+    min: [1, 'Valor deve ser positivo']
   },
   type: {
     type: String,
