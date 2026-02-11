@@ -23,6 +23,11 @@ class UserService {
     return await User.findByEmail(email);
   }
 
+  async findByEmailWithVerification(email) {
+    return await User.findOne({ email: email.toLowerCase() })
+      .select('+verificationToken +verificationTokenExpires');
+  }
+
   async updateUser(id, updates) {
     return await User.findByIdAndUpdate(
       id,
