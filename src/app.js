@@ -9,6 +9,8 @@ const cookieParser = require('cookie-parser');
 const financialRecordsRouter = require('./routes/financialRecords.routes.js');
 const userDataRouter = require('./routes/userData.routes.js');
 const categoriesRouter = require('./routes/categories.routes.js');
+const adminRouter = require('./routes/admin.routes.js');
+const recurrentRouter = require('./routes/recurrent.routes.js');
 const requestLogger = require('./middlewares/requestLogger');
 const { authLimiter, apiLimiter } = require('./middlewares/rateLimiter.middleware');
 
@@ -23,7 +25,7 @@ app.use(helmet({
 app.use(cors({
     origin: process.env.FRONTEND_URL || 'http://localhost:3001',
     credentials: true, // IMPORTANT: Allows cookies to be sent
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
@@ -40,6 +42,8 @@ app.use('/users/register', authLimiter);
 app.use('/records', apiLimiter, financialRecordsRouter);
 app.use('/users', userDataRouter);
 app.use('/categories', apiLimiter, categoriesRouter);
+app.use('/admin', apiLimiter, adminRouter);
+app.use('/recurrent', apiLimiter, recurrentRouter);
 
 app.get('/test-env', (req, res) => {
     res.json({

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { TRANSACTION_TYPE_VALUES } = require('../../constants/transactionTypes');
 
 const categorySchema = new mongoose.Schema({
   name: {
@@ -10,7 +11,7 @@ const categorySchema = new mongoose.Schema({
   type: {
     type: String,
     required: [true, 'Tipo é obrigatório'],
-    enum: ['credito', 'debito']
+    enum: TRANSACTION_TYPE_VALUES
   },
   color: {
     type: String,

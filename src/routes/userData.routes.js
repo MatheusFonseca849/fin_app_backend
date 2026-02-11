@@ -45,7 +45,7 @@ router.post('/register', registerValidation, async (req, res) => {
     });
 
     // Generate tokens
-    const accessToken = generateAccessToken({ id: user._id, email: user.email });
+    const accessToken = generateAccessToken({ id: user._id, email: user.email, role: user.role });
     const refreshToken = generateRefreshToken({ id: user._id });
 
     // Set refresh token cookie
@@ -94,7 +94,7 @@ router.post('/login', loginValidation, async (req, res) => {
     }
 
     // Generate tokens
-    const accessToken = generateAccessToken({ id: user._id, email: user.email });
+    const accessToken = generateAccessToken({ id: user._id, email: user.email, role: user.role });
     const refreshToken = generateRefreshToken({ id: user._id });
 
     // Set cookie
@@ -221,7 +221,7 @@ router.post('/refresh', async (req, res) => {
       );
     }
 
-    const accessToken = generateAccessToken({ id: user._id, email: user.email });
+    const accessToken = generateAccessToken({ id: user._id, email: user.email, role: user.role });
     res.json({ accessToken });
   } catch (error) {
     console.error('Refresh token error:', error);

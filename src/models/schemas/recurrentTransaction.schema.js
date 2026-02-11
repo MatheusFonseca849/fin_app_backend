@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const { TRANSACTION_TYPE_VALUES } = require('../../constants/transactionTypes');
 
-const transactionSchema = new mongoose.Schema({
+const recurrentTransactionSchema = new mongoose.Schema({
   description: {
     type: String,
     required: [true, 'Descrição é obrigatória'],
@@ -25,10 +25,20 @@ const transactionSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Categoria é obrigatória']
   },
-  timestamp: {
+  dayOfMonth: {
+    type: Number,
+    required: [true, 'Dia do mês é obrigatório'],
+    min: [1, 'Dia deve ser entre 1 e 31'],
+    max: [31, 'Dia deve ser entre 1 e 31']
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  },
+  lastApplied: {
     type: Date,
-    default: Date.now
+    default: null
   }
 }, { _id: true });
 
-module.exports = transactionSchema;
+module.exports = recurrentTransactionSchema;

@@ -4,6 +4,7 @@ const { authenticateToken } = require("../middlewares/auth.middleware");
 const createError = require("../middlewares/createError");
 const multer = require("multer");
 const { parse } = require("csv-parse/sync");
+const { TRANSACTION_TYPE_VALUES } = require('../constants/transactionTypes');
 const { 
   createTransactionValidation, 
   updateTransactionValidation,
@@ -119,9 +120,9 @@ router.post(
         }
 
         // Validate type
-        if (record.type !== "credito" && record.type !== "debito") {
+        if (!TRANSACTION_TYPE_VALUES.includes(record.type)) {
           throw new Error(
-            `Linha ${index + 2}: Tipo inválido "${record.type}". Use "credito" ou "debito"`,
+            `Row ${index + 2}: Invalid type "${record.type}". Use "credito" or "debito"`,
           );
         }
 

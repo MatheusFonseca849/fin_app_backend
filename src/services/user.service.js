@@ -1,4 +1,5 @@
 const User = require('../models/User.model');
+const { TRANSACTION_TYPES } = require('../constants/transactionTypes');
 
 class UserService {
   
@@ -39,6 +40,104 @@ class UserService {
 
   async getAllUsers() {
     return await User.find().select('-password');
+  }
+
+  // ============================================
+  // Admin Operations
+  // ============================================
+
+  async getAllUsersSafe() {
+    return await User.find()
+      .select('-password -transactions -recurrentCredits -recurrentDebits')
+      .sort({ createdAt: -1 });
+  }
+
+  async getUserSummary(userId) {
+    const user = await User.findById(userId)
+      .select('-password -transactions -recurrentCredits -recurrentDebits');
+    if (!user) throw new Error('Usuário não encontrado');
+
+    // Get transaction count and balance separately for summary stats
+    const fullUser = await User.findById(userId).select('transactions balance');
+    
+    const summary = user.toObject();
+    summary.stats = {
+      transactionCount: fullUser.transactions.length,
+      categoryCount: user.categories.length,
+      balance: fullUser.balance
+    };
+    return summary;
+  }
+
+  async adminUpdateUser(userId, updates) {
+    const allowedFields = ['name', 'email', 'role'];
+    const safeUpdates = {};
+    for (const key of allowedFields) {
+      if (updates[key] !== undefined) {
+        safeUpdates[key] = updates[key];
+      }
+    }
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      safeUpdates,
+      { new: true, runValidators: true }
+    ).select('-password -transactions -recurrentCredits -recurrentDebits');
+
+    if (!user) throw new Error('Usuário não encontrado');
+    return user;
+  }
+
+  async adminDeleteUser(userId) {
+    const user = await User.findById(userId);
+    if (!user) throw new Error('Usuário não encontrado');
+    if (user.role === 'admin') {
+      throw new Error('Não é possível excluir outro administrador');
+    }
+    return await User.findByIdAndDelete(userId);
+  }
+
+  async updateUserRole(userId, role) {
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { role },
+      { new: true, runValidators: true }
+    ).select('-password -transactions -recurrentCredits -recurrentDebits');
+
+    if (!user) throw new Error('Usuário não encontrado');
+    return user;
+  }
+
+  async getSystemStats() {
+    const totalUsers = await User.countDocuments();
+    const adminCount = await User.countDocuments({ role: 'admin' });
+    const userCount = await User.countDocuments({ role: 'user' });
+
+    // Aggregate transaction counts across all users
+    const transactionStats = await User.aggregate([
+      {
+        $project: {
+          transactionCount: { $size: '$transactions' }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalTransactions: { $sum: '$transactionCount' }
+        }
+      }
+    ]);
+
+    return {
+      users: {
+        total: totalUsers,
+        admins: adminCount,
+        regular: userCount
+      },
+      transactions: {
+        total: transactionStats[0]?.totalTransactions || 0
+      }
+    };
   }
 
   // ============================================
@@ -122,6 +221,65 @@ class UserService {
       errorCount: errors,
       errors: errorDetails
     };
+  }
+
+  // ============================================
+  // Recurrent Operations
+  // ============================================
+
+  _getRecurrentField(type) {
+    if (type === TRANSACTION_TYPES.CREDIT) return 'recurrentCredits';
+    if (type === TRANSACTION_TYPES.DEBIT) return 'recurrentDebits';
+    throw new Error('Invalid type. Use "credito" or "debito"');
+  }
+
+  async getRecurrentTransactions(userId, type) {
+    const field = this._getRecurrentField(type);
+    const user = await User.findById(userId).select(field);
+    if (!user) throw new Error('Usuário não encontrado');
+    return user[field];
+  }
+
+  async addRecurrentTransaction(userId, type, transaction) {
+    const field = this._getRecurrentField(type);
+    const user = await User.findById(userId);
+    if (!user) throw new Error('Usuário não encontrado');
+
+    const categoryExists = user.findCategory(transaction.category);
+    if (!categoryExists) throw new Error('Categoria não encontrada');
+
+    user[field].push(transaction);
+    await user.save();
+
+    return user[field][user[field].length - 1];
+  }
+
+  async updateRecurrentTransaction(userId, type, transactionId, updates) {
+    const field = this._getRecurrentField(type);
+    const user = await User.findById(userId);
+    if (!user) throw new Error('Usuário não encontrado');
+
+    const transaction = user[field].id(transactionId);
+    if (!transaction) throw new Error('Transação recorrente não encontrada');
+
+    Object.assign(transaction, updates);
+    await user.save();
+
+    return transaction;
+  }
+
+  async deleteRecurrentTransaction(userId, type, transactionId) {
+    const field = this._getRecurrentField(type);
+    const user = await User.findById(userId);
+    if (!user) throw new Error('Usuário não encontrado');
+
+    const transaction = user[field].id(transactionId);
+    if (!transaction) throw new Error('Transação recorrente não encontrada');
+
+    user[field].pull(transactionId);
+    await user.save();
+
+    return { message: 'Transação recorrente excluída' };
   }
 
   // ============================================

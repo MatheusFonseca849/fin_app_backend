@@ -1,4 +1,5 @@
 const { body, param, validationResult } = require('express-validator');
+const { TRANSACTION_TYPE_VALUES } = require('../constants/transactionTypes');
 
 // Reusable error handler
 const handleValidationErrors = (req, res, next) => {
@@ -70,7 +71,7 @@ const createTransactionValidation = [
     .customSanitizer(value => Math.round(value * 100)), // Convert to cents
   
   body('type')
-    .isIn(['credito', 'debito']).withMessage('Type must be "credito" or "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Type must be "credito" or "debito"'),
   
   body('category')
     .optional()
@@ -97,7 +98,7 @@ const updateTransactionValidation = [
   
   body('type')
     .optional()
-    .isIn(['credito', 'debito']).withMessage('Type must be "credito" or "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Type must be "credito" or "debito"'),
   
   handleValidationErrors
 ];
@@ -105,6 +106,112 @@ const updateTransactionValidation = [
 const transactionIdValidation = [
   param('id')
     .isMongoId().withMessage('Invalid transaction ID'),
+  
+  handleValidationErrors
+];
+
+// ============ ADMIN VALIDATIONS ============
+
+const adminUserIdValidation = [
+  param('id')
+    .isMongoId().withMessage('Invalid user ID'),
+  
+  handleValidationErrors
+];
+
+const adminUpdateUserValidation = [
+  body('name')
+    .optional()
+    .trim()
+    .isLength({ max: 100 }).withMessage('Name must be less than 100 characters')
+    .escape(),
+  
+  body('email')
+    .optional()
+    .isEmail().withMessage('Invalid email format')
+    .normalizeEmail(),
+  
+  body('role')
+    .optional()
+    .isIn(['user', 'admin']).withMessage('Role must be "user" or "admin"'),
+  
+  handleValidationErrors
+];
+
+// ============ RECURRENT TRANSACTION VALIDATIONS ============
+
+const recurrentTypeValidation = [
+  param('type')
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Type must be "credito" or "debito"'),
+  
+  handleValidationErrors
+];
+
+const createRecurrentValidation = [
+  param('type')
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Type must be "credito" or "debito"'),
+
+  body('description')
+    .trim()
+    .notEmpty().withMessage('Description is required')
+    .isLength({ max: 500 }).withMessage('Description too long')
+    .escape(),
+  
+  body('value')
+    .isFloat({ min: 0.01 }).withMessage('Value must be a positive number')
+    .customSanitizer(value => Math.round(value * 100)),
+  
+  body('category')
+    .trim()
+    .notEmpty().withMessage('Category is required')
+    .escape(),
+  
+  body('dayOfMonth')
+    .isInt({ min: 1, max: 31 }).withMessage('Day of month must be between 1 and 31'),
+  
+  handleValidationErrors
+];
+
+const updateRecurrentValidation = [
+  param('type')
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Type must be "credito" or "debito"'),
+
+  param('id')
+    .isMongoId().withMessage('Invalid recurrent transaction ID'),
+  
+  body('description')
+    .optional()
+    .trim()
+    .isLength({ max: 500 }).withMessage('Description too long')
+    .escape(),
+  
+  body('value')
+    .optional()
+    .isFloat({ min: 0.01 }).withMessage('Value must be a positive number')
+    .customSanitizer(value => Math.round(value * 100)),
+  
+  body('category')
+    .optional()
+    .trim()
+    .escape(),
+  
+  body('dayOfMonth')
+    .optional()
+    .isInt({ min: 1, max: 31 }).withMessage('Day of month must be between 1 and 31'),
+  
+  body('isActive')
+    .optional()
+    .isBoolean().withMessage('isActive must be a boolean'),
+  
+  handleValidationErrors
+];
+
+const deleteRecurrentValidation = [
+  param('type')
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Type must be "credito" or "debito"'),
+
+  param('id')
+    .isMongoId().withMessage('Invalid recurrent transaction ID'),
   
   handleValidationErrors
 ];
@@ -119,7 +226,7 @@ const createCategoryValidation = [
     .escape(),
   
   body('type')
-    .isIn(['credito', 'debito']).withMessage('Type must be "credito" or "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Type must be "credito" or "debito"'),
   
   body('color')
     .optional()
@@ -142,5 +249,11 @@ module.exports = {
   updateTransactionValidation,
   transactionIdValidation,
   createCategoryValidation,
-  categoryIdValidation
+  categoryIdValidation,
+  adminUserIdValidation,
+  adminUpdateUserValidation,
+  recurrentTypeValidation,
+  createRecurrentValidation,
+  updateRecurrentValidation,
+  deleteRecurrentValidation
 };

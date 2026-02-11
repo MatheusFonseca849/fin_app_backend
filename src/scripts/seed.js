@@ -2,6 +2,7 @@ require('dotenv').config();
 const database = require('../config/database');
 const User = require('../models/User.model');
 const bcrypt = require('bcryptjs');
+const { TRANSACTION_TYPES } = require('../constants/transactionTypes');
 
 async function seedDatabase() {
   try {
@@ -30,14 +31,14 @@ async function seedDatabase() {
         {
           description: 'Supermercado',
           value: -150.50,
-          type: 'debito',
+          type: TRANSACTION_TYPES.DEBIT,
           category: 'Alimentação',
           timestamp: new Date('2025-10-05')
         },
         {
           description: 'Salário Outubro',
           value: 3500.00,
-          type: 'credito',
+          type: TRANSACTION_TYPES.CREDIT,
           category: 'Salário',
           timestamp: new Date('2025-10-01')
         }

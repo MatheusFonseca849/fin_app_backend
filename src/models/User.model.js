@@ -1,6 +1,8 @@
 const mongoose = require('mongoose');
 const transactionSchema = require('./schemas/transaction.schema');
+const recurrentTransactionSchema = require('./schemas/recurrentTransaction.schema');
 const categorySchema = require('./schemas/category.schema');
+const { TRANSACTION_TYPES } = require('../constants/transactionTypes');
 
 const userSchema = new mongoose.Schema({
   name: {
@@ -23,6 +25,11 @@ const userSchema = new mongoose.Schema({
     required: [true, 'Senha é obrigatória'],
     minlength: [6, 'Senha muito curta']
   },
+  role: {
+    type: String,
+    enum: ['user', 'admin'],
+    default: 'user'
+  },
   balance: {
     type: Number,
     default: 0 // Balance in cents
@@ -34,11 +41,11 @@ const userSchema = new mongoose.Schema({
     default: []
   },
   recurrentCredits: {
-    type: [transactionSchema],
+    type: [recurrentTransactionSchema],
     default: []
   },
   recurrentDebits: {
-    type: [transactionSchema],
+    type: [recurrentTransactionSchema],
     default: []
   },
   categories: {
@@ -80,15 +87,15 @@ userSchema.statics.findByEmail = function(email) {
 
 userSchema.statics.getDefaultCategories = function() {
   return [
-    { name: 'Alimentação', type: 'debito', color: '#FF6B6B', isDefault: true },
-    { name: 'Transporte', type: 'debito', color: '#4ECDC4', isDefault: true },
-    { name: 'Saúde', type: 'debito', color: '#45B7D1', isDefault: true },
-    { name: 'Contas', type: 'debito', color: '#FFA07A', isDefault: true },
-    { name: 'Lazer', type: 'debito', color: '#98D8C8', isDefault: true },
-    { name: 'Outros', type: 'debito', color: '#F7DC6F', isDefault: true },
-    { name: 'Salário', type: 'credito', color: '#82E0AA', isDefault: true },
-    { name: 'Freelance', type: 'credito', color: '#AED6F1', isDefault: true },
-    { name: 'Sem Categoria', type: 'debito', color: '#D5DBDB', isDefault: true }
+    { name: 'Alimentação', type: TRANSACTION_TYPES.DEBIT, color: '#FF6B6B', isDefault: true },
+    { name: 'Transporte', type: TRANSACTION_TYPES.DEBIT, color: '#4ECDC4', isDefault: true },
+    { name: 'Saúde', type: TRANSACTION_TYPES.DEBIT, color: '#45B7D1', isDefault: true },
+    { name: 'Contas', type: TRANSACTION_TYPES.DEBIT, color: '#FFA07A', isDefault: true },
+    { name: 'Lazer', type: TRANSACTION_TYPES.DEBIT, color: '#98D8C8', isDefault: true },
+    { name: 'Outros', type: TRANSACTION_TYPES.DEBIT, color: '#F7DC6F', isDefault: true },
+    { name: 'Salário', type: TRANSACTION_TYPES.CREDIT, color: '#82E0AA', isDefault: true },
+    { name: 'Freelance', type: TRANSACTION_TYPES.CREDIT, color: '#AED6F1', isDefault: true },
+    { name: 'Sem Categoria', type: TRANSACTION_TYPES.DEBIT, color: '#D5DBDB', isDefault: true }
   ];
 };
 
