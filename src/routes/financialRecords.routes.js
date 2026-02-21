@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const userService = require("../services/user.service");
+const transactionService = require("../services/transaction.service");
 const { authenticateToken } = require("../middlewares/auth.middleware");
 const createError = require("../middlewares/createError");
 const multer = require("multer");
@@ -25,7 +26,13 @@ const upload = multer({
  */
 router.get("/", authenticateToken, async (req, res) => {
   try {
-    const transactions = await userService.getTransactions(req.user.id);
+    const { page, limit, type } = req.query;
+    const transactions = await transactionService.getTransactions(req.user.id, {
+      page: page ? parseInt(page) : 1,
+      limit: limit ? parseInt(limit) : 50,
+      type,
+      isRecurrent: false
+    });
     res.json(transactions);
   } catch (error) {
     console.error("Get transactions error:", error);
@@ -49,7 +56,7 @@ router.post("/", authenticateToken, createTransactionValidation, async (req, res
       return res.status(400).json(createError(400, "Categoria não encontrada"));
     }
 
-    const transaction = await userService.addTransaction(req.user.id, {
+    const transaction = await transactionService.addTransaction(req.user.id, {
       description,
       value,
       type,
@@ -143,7 +150,7 @@ router.post(
       });
 
       // Bulk add transactions
-      const result = await userService.bulkAddTransactions(
+      const result = await transactionService.bulkAddTransactions(
         req.user.id,
         transactions,
       );
@@ -169,10 +176,7 @@ router.post(
  */
 router.get("/:id", authenticateToken, transactionIdValidation, async (req, res) => {
   try {
-    const transactions = await userService.getTransactions(req.user.id);
-    const transaction = transactions.find(
-      (t) => t._id.toString() === req.params.id,
-    );
+    const transaction = await transactionService.getTransactionById(req.user.id, req.params.id);
 
     if (!transaction) {
       return res.status(404).json(createError(404, "Transação não encontrada"));
@@ -200,7 +204,7 @@ router.put("/:id", authenticateToken, updateTransactionValidation, async (req, r
     if (category !== undefined) updates.category = category;
     if (date !== undefined) updates.timestamp = new Date(date);
 
-    const transaction = await userService.updateTransaction(
+    const transaction = await transactionService.updateTransaction(
       req.user.id,
       req.params.id,
       updates,
@@ -219,7 +223,7 @@ router.put("/:id", authenticateToken, updateTransactionValidation, async (req, r
  */
 router.delete("/:id", authenticateToken, transactionIdValidation, async (req, res) => {
   try {
-    await userService.deleteTransaction(req.user.id, req.params.id);
+    await transactionService.deleteTransaction(req.user.id, req.params.id);
     res.json({ message: "Transação excluída com sucesso" });
   } catch (error) {
     console.error("Delete transaction error:", error);

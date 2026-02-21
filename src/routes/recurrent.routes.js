@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const userService = require('../services/user.service');
+const transactionService = require('../services/transaction.service');
 const { authenticateToken } = require('../middlewares/auth.middleware');
 const createError = require('../middlewares/createError');
 const {
@@ -15,7 +16,7 @@ const {
  */
 router.get('/:type', authenticateToken, recurrentTypeValidation, async (req, res) => {
   try {
-    const transactions = await userService.getRecurrentTransactions(req.user.id, req.params.type);
+    const transactions = await transactionService.getRecurrentTransactions(req.user.id, req.params.type);
     res.json(transactions);
   } catch (error) {
     console.error('Get recurrent error:', error);
@@ -29,25 +30,30 @@ router.get('/:type', authenticateToken, recurrentTypeValidation, async (req, res
  */
 router.post('/:type', authenticateToken, createRecurrentValidation, async (req, res) => {
   try {
-    const { description, value, category, dayOfMonth } = req.body;
+    const { description, value, category, billingDay } = req.body;
 
-    const transaction = await userService.addRecurrentTransaction(
+    // Validate category exists
+    const user = await userService.findById(req.user.id);
+    const categoryExists = user.findCategory(category);
+    if (!categoryExists) {
+      return res.status(400).json(createError(400, 'Categoria não encontrada'));
+    }
+
+    const transaction = await transactionService.addRecurrentTransaction(
       req.user.id,
-      req.params.type,
       {
         description,
         value,
         type: req.params.type,
         category,
-        dayOfMonth
+        billingDay
       }
     );
 
     res.status(201).json(transaction);
   } catch (error) {
     console.error('Create recurrent error:', error);
-    const status = error.message === 'Categoria não encontrada' ? 400 : 500;
-    res.status(status).json(createError(status, error.message));
+    res.status(500).json(createError(500, error.message));
   }
 });
 
@@ -57,18 +63,17 @@ router.post('/:type', authenticateToken, createRecurrentValidation, async (req, 
  */
 router.put('/:type/:id', authenticateToken, updateRecurrentValidation, async (req, res) => {
   try {
-    const { description, value, category, dayOfMonth, isActive } = req.body;
+    const { description, value, category, billingDay, isActive } = req.body;
 
     const updates = {};
     if (description !== undefined) updates.description = description;
     if (value !== undefined) updates.value = value;
     if (category !== undefined) updates.category = category;
-    if (dayOfMonth !== undefined) updates.dayOfMonth = dayOfMonth;
+    if (billingDay !== undefined) updates.billingDay = billingDay;
     if (isActive !== undefined) updates.isActive = isActive;
 
-    const transaction = await userService.updateRecurrentTransaction(
+    const transaction = await transactionService.updateRecurrentTransaction(
       req.user.id,
-      req.params.type,
       req.params.id,
       updates
     );
@@ -87,7 +92,7 @@ router.put('/:type/:id', authenticateToken, updateRecurrentValidation, async (re
  */
 router.delete('/:type/:id', authenticateToken, deleteRecurrentValidation, async (req, res) => {
   try {
-    await userService.deleteRecurrentTransaction(req.user.id, req.params.type, req.params.id);
+    await transactionService.deleteRecurrentTransaction(req.user.id, req.params.id);
     res.json({ message: 'Transação recorrente excluída com sucesso' });
   } catch (error) {
     console.error('Delete recurrent error:', error);

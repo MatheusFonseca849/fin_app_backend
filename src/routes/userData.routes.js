@@ -7,6 +7,21 @@ const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = requir
 const { generateVerificationToken, hashToken } = require('../utils/verification.utils');
 const { authenticateToken } = require('../middlewares/auth.middleware');
 const { registerValidation, loginValidation } = require('../middlewares/validators');
+const multer = require('multer');
+const { uploadAvatar } = require('../utils/upload.utils');
+
+const avatarUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
+  fileFilter: (req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Formato de imagem inválido. Use JPEG, PNG ou WebP.'));
+    }
+  }
+});
 
 // ============================================
 // PUBLIC ROUTES (No Auth Required)
@@ -18,7 +33,7 @@ const { registerValidation, loginValidation } = require('../middlewares/validato
  */
 router.post('/register', registerValidation, async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { firstName, lastName, email, password } = req.body;
 
     // Validate password strength
     const passwordValidation = validatePasswordStrength(password);
@@ -44,7 +59,8 @@ router.post('/register', registerValidation, async (req, res) => {
 
     // Create user (unverified)
     const user = await userService.createUser({
-      name,
+      firstName,
+      lastName,
       email,
       password: hashedPassword,
       verificationToken: hashedToken,
@@ -242,6 +258,28 @@ router.get('/me', authenticateToken, async (req, res) => {
 });
 
 /**
+ * PUT /users/avatar
+ * Upload user avatar image
+ */
+router.put('/avatar', authenticateToken, avatarUpload.single('avatar'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json(createError(400, 'Nenhuma imagem enviada'));
+    }
+
+    // Upload to Cloudinary
+    const { url } = await uploadAvatar(req.file.buffer, req.user.id);
+
+    // Store only the URL in MongoDB
+    const user = await userService.updateUser(req.user.id, { avatarUrl: url });
+    res.json({ avatarUrl: user.avatarUrl });
+  } catch (error) {
+    console.error('Avatar upload error:', error);
+    res.status(500).json(createError(500, error.message || 'Erro ao atualizar avatar'));
+  }
+});
+
+/**
  * PUT /users/:id
  * Update user
  */
@@ -254,10 +292,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
       );
     }
 
-    const { name, email, password } = req.body;
+    const { firstName, lastName, email, password } = req.body;
     const updates = {};
 
-    if (name) updates.name = name;
+    if (firstName) updates.firstName = firstName;
+    if (lastName) updates.lastName = lastName;
     if (email) updates.email = email;
     if (password) {
       updates.password = await hashPassword(password);

@@ -24,7 +24,7 @@ async function promoteAdmin() {
     if (user.role === 'admin') {
       console.log('ℹ️  User is already an admin');
       console.log('📧 Email:', user.email);
-      console.log('👤 Name:', user.name);
+      console.log('👤 Name:', user.getFullName());
       await database.disconnect();
       process.exit(0);
     }
@@ -34,7 +34,7 @@ async function promoteAdmin() {
 
     console.log('✅ User promoted to admin successfully');
     console.log('📧 Email:', user.email);
-    console.log('👤 Name:', user.name);
+    console.log('👤 Name:', user.getFullName());
     console.log('🔑 Role:', user.role);
 
     await database.disconnect();

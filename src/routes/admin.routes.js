@@ -50,8 +50,8 @@ router.get('/users/:id', adminUserIdValidation, async (req, res) => {
  */
 router.put('/users/:id', adminUserIdValidation, adminUpdateUserValidation, async (req, res) => {
   try {
-    const { name, email, role } = req.body;
-    const user = await userService.adminUpdateUser(req.params.id, { name, email, role });
+    const { firstName, lastName, email, role } = req.body;
+    const user = await userService.adminUpdateUser(req.params.id, { firstName, lastName, email, role });
     res.json(user);
   } catch (error) {
     console.error('Admin update user error:', error);

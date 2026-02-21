@@ -23,11 +23,17 @@ const handleValidationErrors = (req, res, next) => {
 // ============ USER VALIDATIONS ============
 
 const registerValidation = [
-  body('name')
+  body('firstName')
     .trim()
-    .notEmpty().withMessage('Name is required')
-    .isLength({ max: 100 }).withMessage('Name must be less than 100 characters')
-    .escape(), // Prevents XSS
+    .notEmpty().withMessage('First name is required')
+    .isLength({ min: 2, max: 100 }).withMessage('First name must be between 2 and 100 characters')
+    .escape(),
+  
+  body('lastName')
+    .trim()
+    .notEmpty().withMessage('Last name is required')
+    .isLength({ min: 2, max: 100 }).withMessage('Last name must be between 2 and 100 characters')
+    .escape(),
   
   body('email')
     .isEmail().withMessage('Invalid email format')
@@ -120,10 +126,16 @@ const adminUserIdValidation = [
 ];
 
 const adminUpdateUserValidation = [
-  body('name')
+  body('firstName')
     .optional()
     .trim()
-    .isLength({ max: 100 }).withMessage('Name must be less than 100 characters')
+    .isLength({ min: 2, max: 100 }).withMessage('First name must be between 2 and 100 characters')
+    .escape(),
+  
+  body('lastName')
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 100 }).withMessage('Last name must be between 2 and 100 characters')
     .escape(),
   
   body('email')
@@ -166,8 +178,8 @@ const createRecurrentValidation = [
     .notEmpty().withMessage('Category is required')
     .escape(),
   
-  body('dayOfMonth')
-    .isInt({ min: 1, max: 31 }).withMessage('Day of month must be between 1 and 31'),
+  body('billingDay')
+    .isInt({ min: 1, max: 31 }).withMessage('Billing day must be between 1 and 31'),
   
   handleValidationErrors
 ];
@@ -195,9 +207,9 @@ const updateRecurrentValidation = [
     .trim()
     .escape(),
   
-  body('dayOfMonth')
+  body('billingDay')
     .optional()
-    .isInt({ min: 1, max: 31 }).withMessage('Day of month must be between 1 and 31'),
+    .isInt({ min: 1, max: 31 }).withMessage('Billing day must be between 1 and 31'),
   
   body('isActive')
     .optional()
