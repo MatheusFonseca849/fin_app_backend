@@ -10,8 +10,8 @@ const financialRecordsRouter = require('./routes/financialRecords.routes.js');
 const userDataRouter = require('./routes/userData.routes.js');
 const categoriesRouter = require('./routes/categories.routes.js');
 const adminRouter = require('./routes/admin.routes.js');
-const recurrentRouter = require('./routes/recurrent.routes.js');
 const requestLogger = require('./middlewares/requestLogger');
+const errorHandler = require('./middlewares/errorHandler');
 const { authLimiter, apiLimiter } = require('./middlewares/rateLimiter.middleware');
 
 const app = express();
@@ -32,18 +32,17 @@ app.use(cors({
 
 app.use(express.json());
 app.use(cookieParser());
-app.use(requestLogger); // Move logger before routes
+app.use(requestLogger);
 
 // Apply strict rate limiting to auth endpoints only
-app.use('/users/login', authLimiter);
-app.use('/users/register', authLimiter);
+app.use('/api/v1/users/login', authLimiter);
+app.use('/api/v1/users/register', authLimiter);
 
-// Apply general rate limiting to all API routes
-app.use('/records', apiLimiter, financialRecordsRouter);
-app.use('/users', userDataRouter);
-app.use('/categories', apiLimiter, categoriesRouter);
-app.use('/admin', apiLimiter, adminRouter);
-app.use('/recurrent', apiLimiter, recurrentRouter);
+// API v1 routes
+app.use('/api/v1/records', apiLimiter, financialRecordsRouter);
+app.use('/api/v1/users', userDataRouter);
+app.use('/api/v1/categories', apiLimiter, categoriesRouter);
+app.use('/api/v1/admin', apiLimiter, adminRouter);
 
 app.get('/test-env', (req, res) => {
     res.json({
@@ -56,14 +55,21 @@ app.get('/test-env', (req, res) => {
 
 app.get('/health', (req, res) => {
   const dbStatus = require('./config/database').getStatus();
+  const redisStatus = require('./config/redis');
   res.json({
     status: 'OK',
     database: {
       connected: dbStatus.isConnected,
       name: dbStatus.name
     },
+    redis: {
+      connected: redisStatus.isConnected
+    },
     timestamp: new Date().toISOString()
   });
 });
+
+// Global error handler (must be after all routes)
+app.use(errorHandler);
 
 module.exports = app;

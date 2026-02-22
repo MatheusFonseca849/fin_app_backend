@@ -24,7 +24,7 @@ const transactionSchema = new mongoose.Schema({
     required: [true, 'Tipo é obrigatório'],
     enum: {
       values: TRANSACTION_TYPE_VALUES,
-      message: 'Type must be "credito" or "debito"'
+      message: 'Tipo deve ser "credito" ou "debito"'
     }
   },
   category: {

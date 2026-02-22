@@ -8,7 +8,7 @@ const handleValidationErrors = (req, res, next) => {
     return res.status(400).json({
       error: {
         status: 400,
-        message: 'Validation failed',
+        message: 'Erro de validação',
         details: errors.array().map(err => ({
           field: err.path,
           message: err.msg
@@ -25,22 +25,22 @@ const handleValidationErrors = (req, res, next) => {
 const registerValidation = [
   body('firstName')
     .trim()
-    .notEmpty().withMessage('First name is required')
-    .isLength({ min: 2, max: 100 }).withMessage('First name must be between 2 and 100 characters')
+    .notEmpty().withMessage('Nome é obrigatório')
+    .isLength({ min: 2, max: 100 }).withMessage('Nome deve ter entre 2 e 100 caracteres')
     .escape(),
   
   body('lastName')
     .trim()
-    .notEmpty().withMessage('Last name is required')
-    .isLength({ min: 2, max: 100 }).withMessage('Last name must be between 2 and 100 characters')
+    .notEmpty().withMessage('Sobrenome é obrigatório')
+    .isLength({ min: 2, max: 100 }).withMessage('Sobrenome deve ter entre 2 e 100 caracteres')
     .escape(),
   
   body('email')
-    .isEmail().withMessage('Invalid email format')
+    .isEmail().withMessage('Formato de email inválido')
     .normalizeEmail(),
   
   body('password')
-    .isLength({ min: 6 }).withMessage('Password must be at least 6 characters')
+    .isLength({ min: 6 }).withMessage('Senha deve ter no mínimo 6 caracteres')
     .custom((value) => {
       const passwordValidation = require('../utils/password.utils').validatePasswordStrength(value);
       if (!passwordValidation.isValid) {
@@ -54,11 +54,46 @@ const registerValidation = [
 
 const loginValidation = [
   body('email')
-    .isEmail().withMessage('Invalid email format')
+    .isEmail().withMessage('Formato de email inválido')
     .normalizeEmail(),
   
   body('password')
-    .notEmpty().withMessage('Password is required'),
+    .notEmpty().withMessage('Senha é obrigatória'),
+  
+  handleValidationErrors
+];
+
+const updateUserValidation = [
+  param('id')
+    .isMongoId().withMessage('ID de usuário inválido'),
+
+  body('firstName')
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 100 }).withMessage('Nome deve ter entre 2 e 100 caracteres')
+    .escape(),
+  
+  body('lastName')
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 100 }).withMessage('Sobrenome deve ter entre 2 e 100 caracteres')
+    .escape(),
+  
+  body('email')
+    .optional()
+    .isEmail().withMessage('Formato de email inválido')
+    .normalizeEmail(),
+  
+  body('password')
+    .optional()
+    .isLength({ min: 6 }).withMessage('Senha deve ter no mínimo 6 caracteres')
+    .custom((value) => {
+      const passwordValidation = require('../utils/password.utils').validatePasswordStrength(value);
+      if (!passwordValidation.isValid) {
+        throw new Error(passwordValidation.message);
+      }
+      return true;
+    }),
   
   handleValidationErrors
 ];
@@ -68,50 +103,81 @@ const loginValidation = [
 const createTransactionValidation = [
   body('description')
     .trim()
-    .notEmpty().withMessage('Description is required')
-    .isLength({ max: 500 }).withMessage('Description too long')
+    .notEmpty().withMessage('Descrição é obrigatória')
+    .isLength({ max: 500 }).withMessage('Descrição muito longa')
     .escape(),
   
   body('value')
-    .isFloat({ min: 0.01 }).withMessage('Value must be a positive number')
+    .isFloat({ min: 0.01 }).withMessage('Valor deve ser um número positivo')
     .customSanitizer(value => Math.round(value * 100)), // Convert to cents
   
   body('type')
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Type must be "credito" or "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
   
   body('category')
     .optional()
     .trim()
     .escape(),
   
+  body('isRecurrent')
+    .optional()
+    .isBoolean().withMessage('isRecurrent deve ser verdadeiro ou falso'),
+  
+  body('billingDay')
+    .optional()
+    .isInt({ min: 1, max: 31 }).withMessage('Dia de cobrança deve ser entre 1 e 31')
+    .custom((value, { req }) => {
+      if (req.body.isRecurrent && !value) {
+        throw new Error('Dia de cobrança é obrigatório para transações recorrentes');
+      }
+      return true;
+    }),
+  
   handleValidationErrors
 ];
 
 const updateTransactionValidation = [
   param('id')
-    .isMongoId().withMessage('Invalid transaction ID'),
+    .isMongoId().withMessage('ID de transação inválido'),
   
   body('description')
     .optional()
     .trim()
-    .isLength({ max: 500 }).withMessage('Description too long')
+    .isLength({ max: 500 }).withMessage('Descrição muito longa')
     .escape(),
   
   body('value')
     .optional()
-    .isFloat({ min: 0.01 }).withMessage('Value must be a positive number')
+    .isFloat({ min: 0.01 }).withMessage('Valor deve ser um número positivo')
     .customSanitizer(value => Math.round(value * 100)), // Convert to cents
   
   body('type')
     .optional()
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Type must be "credito" or "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
   
+  body('category')
+    .optional()
+    .trim()
+    .escape(),
+  
+  body('isRecurrent')
+    .optional()
+    .isBoolean().withMessage('isRecurrent deve ser verdadeiro ou falso'),
+  
+  body('billingDay')
+    .optional()
+    .isInt({ min: 1, max: 31 }).withMessage('Dia de cobrança deve ser entre 1 e 31'),
+  
+  body('isActive')
+    .optional()
+    .isBoolean().withMessage('isActive deve ser verdadeiro ou falso'),
+
   handleValidationErrors
 ];
 
 const transactionIdValidation = [
   param('id')
-    .isMongoId().withMessage('Invalid transaction ID'),
+    .isMongoId().withMessage('ID de transação inválido'),
   
   handleValidationErrors
 ];
@@ -120,7 +186,7 @@ const transactionIdValidation = [
 
 const adminUserIdValidation = [
   param('id')
-    .isMongoId().withMessage('Invalid user ID'),
+    .isMongoId().withMessage('ID de usuário inválido'),
   
   handleValidationErrors
 ];
@@ -129,101 +195,23 @@ const adminUpdateUserValidation = [
   body('firstName')
     .optional()
     .trim()
-    .isLength({ min: 2, max: 100 }).withMessage('First name must be between 2 and 100 characters')
+    .isLength({ min: 2, max: 100 }).withMessage('Nome deve ter entre 2 e 100 caracteres')
     .escape(),
   
   body('lastName')
     .optional()
     .trim()
-    .isLength({ min: 2, max: 100 }).withMessage('Last name must be between 2 and 100 characters')
+    .isLength({ min: 2, max: 100 }).withMessage('Sobrenome deve ter entre 2 e 100 caracteres')
     .escape(),
   
   body('email')
     .optional()
-    .isEmail().withMessage('Invalid email format')
+    .isEmail().withMessage('Formato de email inválido')
     .normalizeEmail(),
   
   body('role')
     .optional()
-    .isIn(['user', 'admin']).withMessage('Role must be "user" or "admin"'),
-  
-  handleValidationErrors
-];
-
-// ============ RECURRENT TRANSACTION VALIDATIONS ============
-
-const recurrentTypeValidation = [
-  param('type')
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Type must be "credito" or "debito"'),
-  
-  handleValidationErrors
-];
-
-const createRecurrentValidation = [
-  param('type')
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Type must be "credito" or "debito"'),
-
-  body('description')
-    .trim()
-    .notEmpty().withMessage('Description is required')
-    .isLength({ max: 500 }).withMessage('Description too long')
-    .escape(),
-  
-  body('value')
-    .isFloat({ min: 0.01 }).withMessage('Value must be a positive number')
-    .customSanitizer(value => Math.round(value * 100)),
-  
-  body('category')
-    .trim()
-    .notEmpty().withMessage('Category is required')
-    .escape(),
-  
-  body('billingDay')
-    .isInt({ min: 1, max: 31 }).withMessage('Billing day must be between 1 and 31'),
-  
-  handleValidationErrors
-];
-
-const updateRecurrentValidation = [
-  param('type')
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Type must be "credito" or "debito"'),
-
-  param('id')
-    .isMongoId().withMessage('Invalid recurrent transaction ID'),
-  
-  body('description')
-    .optional()
-    .trim()
-    .isLength({ max: 500 }).withMessage('Description too long')
-    .escape(),
-  
-  body('value')
-    .optional()
-    .isFloat({ min: 0.01 }).withMessage('Value must be a positive number')
-    .customSanitizer(value => Math.round(value * 100)),
-  
-  body('category')
-    .optional()
-    .trim()
-    .escape(),
-  
-  body('billingDay')
-    .optional()
-    .isInt({ min: 1, max: 31 }).withMessage('Billing day must be between 1 and 31'),
-  
-  body('isActive')
-    .optional()
-    .isBoolean().withMessage('isActive must be a boolean'),
-  
-  handleValidationErrors
-];
-
-const deleteRecurrentValidation = [
-  param('type')
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Type must be "credito" or "debito"'),
-
-  param('id')
-    .isMongoId().withMessage('Invalid recurrent transaction ID'),
+    .isIn(['user', 'admin']).withMessage('Cargo deve ser "user" ou "admin"'),
   
   handleValidationErrors
 ];
@@ -233,23 +221,23 @@ const deleteRecurrentValidation = [
 const createCategoryValidation = [
   body('name')
     .trim()
-    .notEmpty().withMessage('Category name is required')
-    .isLength({ max: 50 }).withMessage('Category name too long')
+    .notEmpty().withMessage('Nome da categoria é obrigatório')
+    .isLength({ max: 50 }).withMessage('Nome da categoria muito longo')
     .escape(),
   
   body('type')
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Type must be "credito" or "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
   
   body('color')
     .optional()
-    .matches(/^#[0-9A-Fa-f]{6}$/).withMessage('Color must be a valid hex code (e.g., #FF5733)'),
+    .matches(/^#[0-9A-Fa-f]{6}$/).withMessage('Cor deve ser um código hex válido (ex: #FF5733)'),
   
   handleValidationErrors
 ];
 
 const categoryIdValidation = [
   param('id')
-    .isMongoId().withMessage('Invalid category ID'),
+    .isMongoId().withMessage('ID de categoria inválido'),
   
   handleValidationErrors
 ];
@@ -257,15 +245,12 @@ const categoryIdValidation = [
 module.exports = {
   registerValidation,
   loginValidation,
+  updateUserValidation,
   createTransactionValidation,
   updateTransactionValidation,
   transactionIdValidation,
   createCategoryValidation,
   categoryIdValidation,
   adminUserIdValidation,
-  adminUpdateUserValidation,
-  recurrentTypeValidation,
-  createRecurrentValidation,
-  updateRecurrentValidation,
-  deleteRecurrentValidation
+  adminUpdateUserValidation
 };

@@ -6,9 +6,10 @@ const { hashPassword, comparePassword, validatePasswordStrength } = require('../
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt.utils');
 const { generateVerificationToken, hashToken } = require('../utils/verification.utils');
 const { authenticateToken } = require('../middlewares/auth.middleware');
-const { registerValidation, loginValidation } = require('../middlewares/validators');
+const { registerValidation, loginValidation, updateUserValidation } = require('../middlewares/validators');
 const multer = require('multer');
 const { uploadAvatar } = require('../utils/upload.utils');
+const cacheService = require('../services/cache.service');
 
 const avatarUpload = multer({
   storage: multer.memoryStorage(),
@@ -246,11 +247,18 @@ router.post('/login', loginValidation, async (req, res) => {
  */
 router.get('/me', authenticateToken, async (req, res) => {
   try {
+    const cached = await cacheService.getCachedUserProfile(req.user.id);
+    if (cached) return res.json(cached);
+
     const user = await userService.findById(req.user.id);
     if (!user) {
       return res.status(404).json(createError(404, 'Usuário não encontrado'));
     }
-    res.json(user);
+
+    const userData = user.toJSON();
+    await cacheService.cacheUserProfile(req.user.id, userData);
+
+    res.json(userData);
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json(createError(500, 'Erro ao buscar usuário'));
@@ -272,6 +280,7 @@ router.put('/avatar', authenticateToken, avatarUpload.single('avatar'), async (r
 
     // Store only the URL in MongoDB
     const user = await userService.updateUser(req.user.id, { avatarUrl: url });
+    await cacheService.invalidateUser(req.user.id);
     res.json({ avatarUrl: user.avatarUrl });
   } catch (error) {
     console.error('Avatar upload error:', error);
@@ -283,7 +292,7 @@ router.put('/avatar', authenticateToken, avatarUpload.single('avatar'), async (r
  * PUT /users/:id
  * Update user
  */
-router.put('/:id', authenticateToken, async (req, res) => {
+router.put('/:id', authenticateToken, updateUserValidation, async (req, res) => {
   try {
     // Check ownership
     if (req.params.id !== req.user.id) {
@@ -303,6 +312,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     }
 
     const user = await userService.updateUser(req.user.id, updates);
+    await cacheService.invalidateUser(req.user.id);
     res.json(user);
   } catch (error) {
     console.error('Update user error:', error);
@@ -323,6 +333,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     }
 
     await userService.deleteUser(req.user.id);
+    await cacheService.invalidateUser(req.user.id);
     res.json({ message: 'Usuário excluído com sucesso' });
   } catch (error) {
     console.error('Delete user error:', error);

@@ -3,7 +3,7 @@ const Transaction = require('../models/schemas/transaction.schema');
 class TransactionService {
 
   // ============================================
-  // Regular Transaction Operations
+  // Transaction Operations
   // ============================================
 
   async getTransactions(userId, { page = 1, limit = 50, type, isRecurrent } = {}) {
@@ -50,68 +50,29 @@ class TransactionService {
   }
 
   async bulkAddTransactions(userId, transactions) {
-    let created = 0;
-    let errors = 0;
-    const errorDetails = [];
+    const docs = transactions.map(txData => ({ ...txData, userId }));
 
-    for (const txData of transactions) {
-      try {
-        const transaction = new Transaction({ ...txData, userId });
-        await transaction.save();
-        created++;
-      } catch (error) {
-        errors++;
-        errorDetails.push({
-          transaction: txData,
-          error: error.message
-        });
-      }
+    try {
+      const result = await Transaction.insertMany(docs, { ordered: false });
+      return {
+        createdCount: result.length,
+        errorCount: 0,
+        errors: []
+      };
+    } catch (error) {
+      // ordered:false continues past individual failures
+      const insertedCount = error.insertedDocs?.length || 0;
+      const errorDetails = (error.writeErrors || []).map(e => ({
+        transaction: docs[e.index],
+        error: e.errmsg || e.message
+      }));
+
+      return {
+        createdCount: insertedCount,
+        errorCount: errorDetails.length,
+        errors: errorDetails
+      };
     }
-
-    return {
-      createdCount: created,
-      errorCount: errors,
-      errors: errorDetails
-    };
-  }
-
-  // ============================================
-  // Recurrent Transaction Operations
-  // ============================================
-
-  async getRecurrentTransactions(userId, type) {
-    const filter = { userId, isRecurrent: true };
-    if (type) filter.type = type;
-    return await Transaction.find(filter).sort({ billingDay: 1 });
-  }
-
-  async addRecurrentTransaction(userId, transactionData) {
-    const transaction = new Transaction({
-      ...transactionData,
-      userId,
-      isRecurrent: true
-    });
-    return await transaction.save();
-  }
-
-  async updateRecurrentTransaction(userId, transactionId, updates) {
-    const transaction = await Transaction.findOneAndUpdate(
-      { _id: transactionId, userId, isRecurrent: true },
-      updates,
-      { new: true, runValidators: true }
-    );
-    if (!transaction) throw new Error('Transação recorrente não encontrada');
-    return transaction;
-  }
-
-  async deleteRecurrentTransaction(userId, transactionId) {
-    const transaction = await Transaction.findOneAndDelete({
-      _id: transactionId,
-      userId,
-      isRecurrent: true
-    });
-    if (!transaction) throw new Error('Transação recorrente não encontrada');
-    return { message: 'Transação recorrente excluída' };
   }
 
   // ============================================

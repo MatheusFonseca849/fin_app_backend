@@ -3,13 +3,19 @@ const userService = require('../services/user.service');
 const { authenticateToken } = require('../middlewares/auth.middleware');
 const createError = require('../middlewares/createError');
 const { createCategoryValidation, categoryIdValidation } = require('../middlewares/validators');
+const cacheService = require('../services/cache.service');
+
 /**
  * GET /categories
  * Get all categories
  */
 router.get('/', authenticateToken, async (req, res) => {
   try {
+    const cached = await cacheService.getCachedCategories(req.user.id);
+    if (cached) return res.json(cached);
+
     const categories = await userService.getCategories(req.user.id);
+    await cacheService.cacheCategories(req.user.id, categories);
     res.json(categories);
   } catch (error) {
     console.error('Get categories error:', error);
@@ -32,6 +38,7 @@ router.post('/', authenticateToken, createCategoryValidation, async (req, res) =
       isDefault: false
     });
 
+    await cacheService.invalidateCategories(req.user.id);
     res.status(201).json(category);
   } catch (error) {
     console.error('Create category error:', error);
@@ -53,6 +60,7 @@ router.put('/:id', authenticateToken, categoryIdValidation, async (req, res) => 
       { name, type, color }
     );
 
+    await cacheService.invalidateCategories(req.user.id);
     res.json(category);
   } catch (error) {
     console.error('Update category error:', error);
@@ -67,6 +75,7 @@ router.put('/:id', authenticateToken, categoryIdValidation, async (req, res) => 
 router.delete('/:id', authenticateToken, categoryIdValidation, async (req, res) => {
   try {
     await userService.deleteCategory(req.user.id, req.params.id);
+    await cacheService.invalidateCategories(req.user.id);
     res.json({ 
       message: 'Categoria excluída. Transações movidas para "Sem Categoria"' 
     });
