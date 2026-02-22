@@ -1,6 +1,5 @@
 const cron = require('node-cron');
-const User = require('../models/User.model');
-const { TRANSACTION_TYPES } = require('../constants/transactionTypes');
+const Transaction = require('../models/schemas/transaction.schema');
 
 class RecurrenceService {
 
@@ -30,74 +29,62 @@ class RecurrenceService {
     const currentDay = today.getDate();
     const currentMonth = today.getMonth();
     const currentYear = today.getFullYear();
+    const periodStart = new Date(currentYear, currentMonth, 1);
+    const now = new Date();
 
-    // Find users who have active recurrent transactions matching today's day
-    const users = await User.find({
+    // Find all active recurrent transactions matching today's billingDay
+    const recurrents = await Transaction.find({
+      isRecurrent: true,
+      isActive: true,
+      billingDay: currentDay,
       $or: [
-        { 'recurrentCredits': { $elemMatch: { dayOfMonth: currentDay, isActive: true } } },
-        { 'recurrentDebits': { $elemMatch: { dayOfMonth: currentDay, isActive: true } } }
+        { lastApplied: null },
+        { lastApplied: { $lt: periodStart } }
       ]
     });
 
-    let totalApplied = 0;
+    if (recurrents.length === 0) {
+      console.log('✅ [Recurrence] No recurrences to apply today.');
+      return 0;
+    }
 
-    for (const user of users) {
-      try {
-        const applied = await this._processUserRecurrences(user, currentDay, currentMonth, currentYear);
-        totalApplied += applied;
-      } catch (error) {
-        console.error(`❌ [Recurrence] Error for user ${user._id}:`, error.message);
+    // 1. Batch insert all new transaction entries at once
+    const newTransactions = recurrents.map(r => ({
+      userId: r.userId,
+      description: r.description,
+      value: r.value,
+      type: r.type,
+      category: r.category,
+      isRecurrent: false,
+      timestamp: now
+    }));
+
+    let insertedCount = 0;
+    try {
+      const result = await Transaction.insertMany(newTransactions, { ordered: false });
+      insertedCount = result.length;
+    } catch (error) {
+      // ordered:false means it continues past individual failures
+      insertedCount = error.insertedDocs?.length || 0;
+      console.error(`❌ [Recurrence] insertMany partial failure: ${error.message}`);
+    }
+
+    // 2. Batch update all recurrent lastApplied timestamps via bulkWrite
+    const bulkOps = recurrents.map(r => ({
+      updateOne: {
+        filter: { _id: r._id },
+        update: { $set: { lastApplied: now } }
       }
+    }));
+
+    try {
+      await Transaction.bulkWrite(bulkOps, { ordered: false });
+    } catch (error) {
+      console.error(`❌ [Recurrence] bulkWrite error: ${error.message}`);
     }
 
-    console.log(`✅ [Recurrence] Done. Applied ${totalApplied} transaction(s) for ${users.length} user(s).`);
-    return totalApplied;
-  }
-
-  async _processUserRecurrences(user, currentDay, currentMonth, currentYear) {
-    let applied = 0;
-    const periodStart = new Date(currentYear, currentMonth, 1);
-
-    // Process recurrent credits
-    for (const recurrent of user.recurrentCredits) {
-      if (!recurrent.isActive || recurrent.dayOfMonth !== currentDay) continue;
-      if (recurrent.lastApplied && recurrent.lastApplied >= periodStart) continue;
-
-      user.transactions.push({
-        description: recurrent.description,
-        value: recurrent.value,
-        type: TRANSACTION_TYPES.CREDIT,
-        category: recurrent.category,
-        timestamp: new Date()
-      });
-
-      recurrent.lastApplied = new Date();
-      applied++;
-    }
-
-    // Process recurrent debits
-    for (const recurrent of user.recurrentDebits) {
-      if (!recurrent.isActive || recurrent.dayOfMonth !== currentDay) continue;
-      if (recurrent.lastApplied && recurrent.lastApplied >= periodStart) continue;
-
-      user.transactions.push({
-        description: recurrent.description,
-        value: recurrent.value,
-        type: TRANSACTION_TYPES.DEBIT,
-        category: recurrent.category,
-        timestamp: new Date()
-      });
-
-      recurrent.lastApplied = new Date();
-      applied++;
-    }
-
-    if (applied > 0) {
-      await user.save();
-      console.log(`  📌 User ${user.email}: ${applied} recurrence(s) applied`);
-    }
-
-    return applied;
+    console.log(`✅ [Recurrence] Done. Applied ${insertedCount} transaction(s) from ${recurrents.length} recurrence(s).`);
+    return insertedCount;
   }
 }
 

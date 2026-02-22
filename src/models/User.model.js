@@ -1,16 +1,27 @@
 const mongoose = require('mongoose');
-const transactionSchema = require('./schemas/transaction.schema');
-const recurrentTransactionSchema = require('./schemas/recurrentTransaction.schema');
 const categorySchema = require('./schemas/category.schema');
 const { TRANSACTION_TYPES } = require('../constants/transactionTypes');
 
 const userSchema = new mongoose.Schema({
-  name: {
+  firstName: {
     type: String,
     required: [true, 'Nome é obrigatório'],
     trim: true,
     minlength: [2, 'Nome muito curto'],
-    maxlength: [200, 'Nome muito longo']
+    maxlength: [100, 'Nome muito longo']
+  },
+  lastName: {
+    type: String,
+    required: [true, 'Sobrenome é obrigatório'],
+    trim: true,
+    minlength: [2, 'Sobrenome muito curto'],
+    maxlength: [100, 'Sobrenome muito longo']
+  },
+  avatarUrl: {
+    type: String,
+    default: null,
+    trim: true,
+    maxlength: [500, 'URL do avatar muito longa']
   },
   email: {
     type: String,
@@ -30,23 +41,21 @@ const userSchema = new mongoose.Schema({
     enum: ['user', 'admin'],
     default: 'user'
   },
+  isVerified: {
+    type: Boolean,
+    default: false
+  },
+  verificationToken: {
+    type: String,
+    select: false
+  },
+  verificationTokenExpires: {
+    type: Date,
+    select: false
+  },
   balance: {
     type: Number,
     default: 0 // Balance in cents
-  },
-  
-  // Embedded arrays
-  transactions: {
-    type: [transactionSchema],
-    default: []
-  },
-  recurrentCredits: {
-    type: [recurrentTransactionSchema],
-    default: []
-  },
-  recurrentDebits: {
-    type: [recurrentTransactionSchema],
-    default: []
   },
   categories: {
     type: [categorySchema],
@@ -60,21 +69,20 @@ const userSchema = new mongoose.Schema({
 // ============================================
 // INDEXES
 // ============================================
-userSchema.index({ 'transactions.timestamp': -1 });
+userSchema.index({ email: 1 }, { unique: true });
 
 // ============================================
 // INSTANCE METHODS
 // ============================================
 
-userSchema.methods.calculateBalance = function() {
-  // Returns balance in cents
-  return this.transactions.reduce((sum, t) => sum + t.value, 0);
-};
-
 userSchema.methods.findCategory = function(identifier) {
   return this.categories.find(c => 
     c.name === identifier || c._id.toString() === identifier
   );
+};
+
+userSchema.methods.getFullName = function() {
+  return `${this.firstName} ${this.lastName}`;
 };
 
 // ============================================

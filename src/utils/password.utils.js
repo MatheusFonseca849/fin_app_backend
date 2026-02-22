@@ -13,7 +13,7 @@ const validatePasswordStrength = (password) => {
     if (!password || password.length < 6) {
         return { 
             isValid: false, 
-            message: 'Password must have at least 6 characters' 
+            message: 'Senha deve ter no mínimo 6 caracteres' 
         };
     }
     
@@ -29,25 +29,25 @@ const validatePasswordStrength = (password) => {
     if(!hasUpperCase){
         return { 
             isValid: false, 
-            message: 'Password must contain at least one uppercase letter' 
+            message: 'Senha deve conter pelo menos uma letra maiúscula' 
         };
     }
     if(!hasLowerCase){
         return { 
             isValid: false, 
-            message: 'Password must contain at least one lowercase letter' 
+            message: 'Senha deve conter pelo menos uma letra minúscula' 
         };
     }
     if(!hasNumber){
         return { 
             isValid: false, 
-            message: 'Password must contain at least one number' 
+            message: 'Senha deve conter pelo menos um número' 
         };
     }
     if(!hasSpecialChar){
         return { 
             isValid: false, 
-            message: 'Password must contain at least one special character' 
+            message: 'Senha deve conter pelo menos um caractere especial' 
         };
     }
     

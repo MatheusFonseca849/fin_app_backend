@@ -2,21 +2,25 @@ require('dotenv').config();
 const app = require('./src/app');
 const database = require('./src/config/database');
 const recurrenceService = require('./src/services/recurrence.service');
+const redisClient = require('./src/config/redis');
 
 const PORT = process.env.PORT || 3000;
 
 async function startServer() {
   try {
-    // 1. Connect to database FIRST
+    // 1. Connect to database
     await database.connect();
     
-    // 2. Then start HTTP server
+    // 2. Connect to Redis cache
+    redisClient.connect();
+    
+    // 3. Then start HTTP server
     app.listen(PORT, () => {
       console.log('🚀 Server running on http://localhost:' + PORT);
       console.log('📊 MongoDB status:', database.getStatus());
     });
 
-    // 3. Start recurrence scheduler
+    // 4. Start recurrence scheduler
     recurrenceService.start();
     
   } catch (error) {

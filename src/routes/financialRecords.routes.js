@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const userService = require("../services/user.service");
+const transactionService = require("../services/transaction.service");
 const { authenticateToken } = require("../middlewares/auth.middleware");
 const createError = require("../middlewares/createError");
 const multer = require("multer");
@@ -10,6 +11,7 @@ const {
   updateTransactionValidation,
   transactionIdValidation 
 } = require('../middlewares/validators');
+const cacheService = require('../services/cache.service');
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -25,7 +27,28 @@ const upload = multer({
  */
 router.get("/", authenticateToken, async (req, res) => {
   try {
-    const transactions = await userService.getTransactions(req.user.id);
+    const { page, limit, type, isRecurrent } = req.query;
+    const pageNum = page ? parseInt(page) : 1;
+    const hasFilters = type !== undefined || isRecurrent !== undefined;
+
+    const cached = await cacheService.getCachedTransactions(req.user.id, pageNum);
+    if (cached && !hasFilters) return res.json(cached);
+
+    const options = {
+      page: pageNum,
+      limit: limit ? parseInt(limit) : 50,
+      type
+    };
+    if (isRecurrent !== undefined) {
+      options.isRecurrent = isRecurrent === 'true';
+    }
+
+    const transactions = await transactionService.getTransactions(req.user.id, options);
+
+    if (!hasFilters) {
+      await cacheService.cacheTransactions(req.user.id, pageNum, transactions);
+    }
+
     res.json(transactions);
   } catch (error) {
     console.error("Get transactions error:", error);
@@ -39,7 +62,7 @@ router.get("/", authenticateToken, async (req, res) => {
  */
 router.post("/", authenticateToken, createTransactionValidation, async (req, res) => {
   try {
-    const { description, value, type, category } = req.body;
+    const { description, value, type, category, isRecurrent, billingDay } = req.body;
 
     // Validate category exists
     const user = await userService.findById(req.user.id);
@@ -49,13 +72,15 @@ router.post("/", authenticateToken, createTransactionValidation, async (req, res
       return res.status(400).json(createError(400, "Categoria não encontrada"));
     }
 
-    const transaction = await userService.addTransaction(req.user.id, {
-      description,
-      value,
-      type,
-      category,
-    });
+    const transactionData = { description, value, type, category };
+    if (isRecurrent) {
+      transactionData.isRecurrent = true;
+      transactionData.billingDay = billingDay;
+    }
 
+    const transaction = await transactionService.addTransaction(req.user.id, transactionData);
+
+    await cacheService.invalidateTransactions(req.user.id);
     res.status(201).json(transaction);
   } catch (error) {
     console.error("Create transaction error:", error);
@@ -122,7 +147,7 @@ router.post(
         // Validate type
         if (!TRANSACTION_TYPE_VALUES.includes(record.type)) {
           throw new Error(
-            `Row ${index + 2}: Invalid type "${record.type}". Use "credito" or "debito"`,
+            `Linha ${index + 2}: Tipo inválido "${record.type}". Use "credito" ou "debito"`,
           );
         }
 
@@ -143,7 +168,7 @@ router.post(
       });
 
       // Bulk add transactions
-      const result = await userService.bulkAddTransactions(
+      const result = await transactionService.bulkAddTransactions(
         req.user.id,
         transactions,
       );
@@ -154,6 +179,7 @@ router.post(
         errorCount: result.errorCount,
         errors: result.errors,
       });
+      await cacheService.invalidateTransactions(req.user.id);
     } catch (error) {
       console.error("Import CSV error:", error);
       res
@@ -169,10 +195,7 @@ router.post(
  */
 router.get("/:id", authenticateToken, transactionIdValidation, async (req, res) => {
   try {
-    const transactions = await userService.getTransactions(req.user.id);
-    const transaction = transactions.find(
-      (t) => t._id.toString() === req.params.id,
-    );
+    const transaction = await transactionService.getTransactionById(req.user.id, req.params.id);
 
     if (!transaction) {
       return res.status(404).json(createError(404, "Transação não encontrada"));
@@ -191,7 +214,7 @@ router.get("/:id", authenticateToken, transactionIdValidation, async (req, res) 
  */
 router.put("/:id", authenticateToken, updateTransactionValidation, async (req, res) => {
   try {
-    const { description, value, type, category, date } = req.body;
+    const { description, value, type, category, date, isRecurrent, billingDay, isActive } = req.body;
 
     const updates = {};
     if (description !== undefined) updates.description = description;
@@ -199,13 +222,17 @@ router.put("/:id", authenticateToken, updateTransactionValidation, async (req, r
     if (type !== undefined) updates.type = type;
     if (category !== undefined) updates.category = category;
     if (date !== undefined) updates.timestamp = new Date(date);
+    if (isRecurrent !== undefined) updates.isRecurrent = isRecurrent;
+    if (billingDay !== undefined) updates.billingDay = billingDay;
+    if (isActive !== undefined) updates.isActive = isActive;
 
-    const transaction = await userService.updateTransaction(
+    const transaction = await transactionService.updateTransaction(
       req.user.id,
       req.params.id,
       updates,
     );
 
+    await cacheService.invalidateTransactions(req.user.id);
     res.json(transaction);
   } catch (error) {
     console.error("Update transaction error:", error);
@@ -219,7 +246,8 @@ router.put("/:id", authenticateToken, updateTransactionValidation, async (req, r
  */
 router.delete("/:id", authenticateToken, transactionIdValidation, async (req, res) => {
   try {
-    await userService.deleteTransaction(req.user.id, req.params.id);
+    await transactionService.deleteTransaction(req.user.id, req.params.id);
+    await cacheService.invalidateTransactions(req.user.id);
     res.json({ message: "Transação excluída com sucesso" });
   } catch (error) {
     console.error("Delete transaction error:", error);

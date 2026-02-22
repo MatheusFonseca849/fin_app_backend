@@ -1,5 +1,6 @@
 const User = require('../models/User.model');
-const { TRANSACTION_TYPES } = require('../constants/transactionTypes');
+const transactionService = require('./transaction.service');
+const { deleteAvatar } = require('../utils/upload.utils');
 
 class UserService {
   
@@ -23,6 +24,11 @@ class UserService {
     return await User.findByEmail(email);
   }
 
+  async findByEmailWithVerification(email) {
+    return await User.findOne({ email: email.toLowerCase() })
+      .select('+verificationToken +verificationTokenExpires');
+  }
+
   async updateUser(id, updates) {
     return await User.findByIdAndUpdate(
       id,
@@ -35,6 +41,11 @@ class UserService {
   }
 
   async deleteUser(id) {
+    const user = await User.findById(id);
+    if (!user) throw new Error('Usuário não encontrado');
+
+    await transactionService.deleteAllUserTransactions(id);
+    await deleteAvatar(id);  // Clean up cloud storage
     return await User.findByIdAndDelete(id);
   }
 
@@ -48,29 +59,27 @@ class UserService {
 
   async getAllUsersSafe() {
     return await User.find()
-      .select('-password -transactions -recurrentCredits -recurrentDebits')
+      .select('-password')
       .sort({ createdAt: -1 });
   }
 
   async getUserSummary(userId) {
-    const user = await User.findById(userId)
-      .select('-password -transactions -recurrentCredits -recurrentDebits');
+    const user = await User.findById(userId).select('-password');
     if (!user) throw new Error('Usuário não encontrado');
 
-    // Get transaction count and balance separately for summary stats
-    const fullUser = await User.findById(userId).select('transactions balance');
+    const transactionCount = await transactionService.getTransactionCount(userId);
     
     const summary = user.toObject();
     summary.stats = {
-      transactionCount: fullUser.transactions.length,
+      transactionCount,
       categoryCount: user.categories.length,
-      balance: fullUser.balance
+      balance: user.balance
     };
     return summary;
   }
 
   async adminUpdateUser(userId, updates) {
-    const allowedFields = ['name', 'email', 'role'];
+    const allowedFields = ['firstName', 'lastName', 'email', 'role'];
     const safeUpdates = {};
     for (const key of allowedFields) {
       if (updates[key] !== undefined) {
@@ -82,7 +91,7 @@ class UserService {
       userId,
       safeUpdates,
       { new: true, runValidators: true }
-    ).select('-password -transactions -recurrentCredits -recurrentDebits');
+    ).select('-password');
 
     if (!user) throw new Error('Usuário não encontrado');
     return user;
@@ -94,6 +103,9 @@ class UserService {
     if (user.role === 'admin') {
       throw new Error('Não é possível excluir outro administrador');
     }
+
+    await transactionService.deleteAllUserTransactions(userId);
+    await deleteAvatar(userId);  // Clean up cloud storage
     return await User.findByIdAndDelete(userId);
   }
 
@@ -102,7 +114,7 @@ class UserService {
       userId,
       { role },
       { new: true, runValidators: true }
-    ).select('-password -transactions -recurrentCredits -recurrentDebits');
+    ).select('-password');
 
     if (!user) throw new Error('Usuário não encontrado');
     return user;
@@ -112,21 +124,7 @@ class UserService {
     const totalUsers = await User.countDocuments();
     const adminCount = await User.countDocuments({ role: 'admin' });
     const userCount = await User.countDocuments({ role: 'user' });
-
-    // Aggregate transaction counts across all users
-    const transactionStats = await User.aggregate([
-      {
-        $project: {
-          transactionCount: { $size: '$transactions' }
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          totalTransactions: { $sum: '$transactionCount' }
-        }
-      }
-    ]);
+    const totalTransactions = await transactionService.getSystemTransactionCount();
 
     return {
       users: {
@@ -135,151 +133,9 @@ class UserService {
         regular: userCount
       },
       transactions: {
-        total: transactionStats[0]?.totalTransactions || 0
+        total: totalTransactions
       }
     };
-  }
-
-  // ============================================
-  // Transaction Operations
-  // ============================================
-
-  async getTransactions(userId) {
-    const user = await User.findById(userId).select('transactions');
-    return user ? user.transactions : [];
-  }
-
-  async addTransaction(userId, transaction) {
-    const user = await User.findById(userId);
-    if (!user) throw new Error('Usuário não encontrado');
-
-    user.transactions.push(transaction);
-    await user.save();
-    
-    return user.transactions[user.transactions.length - 1];
-  }
-
-  async updateTransaction(userId, transactionId, updates) {
-    const user = await User.findById(userId);
-    if (!user) throw new Error('Usuário não encontrado');
-
-    const transaction = user.transactions.id(transactionId);
-    if (!transaction) throw new Error('Transação não encontrada');
-
-    Object.assign(transaction, updates);
-    await user.save();
-    
-    return transaction;
-  }
-
-  async deleteTransaction(userId, transactionId) {
-    const user = await User.findById(userId);
-    if (!user) throw new Error('Usuário não encontrado');
-
-    user.transactions.pull(transactionId);
-    await user.save();
-    
-    return { message: 'Transação excluída' };
-  }
-
-  async bulkAddTransactions(userId, transactions) {
-    const user = await User.findById(userId);
-    if (!user) throw new Error('Usuário não encontrado');
-
-    let created = 0;
-    let errors = 0;
-    const errorDetails = [];
-
-    for (const transaction of transactions) {
-      try {
-        // Validate category exists
-        const categoryExists = user.findCategory(transaction.category);
-        if (!categoryExists) {
-          errors++;
-          errorDetails.push({
-            transaction,
-            error: 'Categoria não encontrada'
-          });
-          continue;
-        }
-
-        user.transactions.push(transaction);
-        created++;
-      } catch (error) {
-        errors++;
-        errorDetails.push({
-          transaction,
-          error: error.message
-        });
-      }
-    }
-
-    await user.save();
-    
-    return {
-      createdCount: created,
-      errorCount: errors,
-      errors: errorDetails
-    };
-  }
-
-  // ============================================
-  // Recurrent Operations
-  // ============================================
-
-  _getRecurrentField(type) {
-    if (type === TRANSACTION_TYPES.CREDIT) return 'recurrentCredits';
-    if (type === TRANSACTION_TYPES.DEBIT) return 'recurrentDebits';
-    throw new Error('Invalid type. Use "credito" or "debito"');
-  }
-
-  async getRecurrentTransactions(userId, type) {
-    const field = this._getRecurrentField(type);
-    const user = await User.findById(userId).select(field);
-    if (!user) throw new Error('Usuário não encontrado');
-    return user[field];
-  }
-
-  async addRecurrentTransaction(userId, type, transaction) {
-    const field = this._getRecurrentField(type);
-    const user = await User.findById(userId);
-    if (!user) throw new Error('Usuário não encontrado');
-
-    const categoryExists = user.findCategory(transaction.category);
-    if (!categoryExists) throw new Error('Categoria não encontrada');
-
-    user[field].push(transaction);
-    await user.save();
-
-    return user[field][user[field].length - 1];
-  }
-
-  async updateRecurrentTransaction(userId, type, transactionId, updates) {
-    const field = this._getRecurrentField(type);
-    const user = await User.findById(userId);
-    if (!user) throw new Error('Usuário não encontrado');
-
-    const transaction = user[field].id(transactionId);
-    if (!transaction) throw new Error('Transação recorrente não encontrada');
-
-    Object.assign(transaction, updates);
-    await user.save();
-
-    return transaction;
-  }
-
-  async deleteRecurrentTransaction(userId, type, transactionId) {
-    const field = this._getRecurrentField(type);
-    const user = await User.findById(userId);
-    if (!user) throw new Error('Usuário não encontrado');
-
-    const transaction = user[field].id(transactionId);
-    if (!transaction) throw new Error('Transação recorrente não encontrada');
-
-    user[field].pull(transactionId);
-    await user.save();
-
-    return { message: 'Transação recorrente excluída' };
   }
 
   // ============================================
@@ -335,12 +191,8 @@ class UserService {
       c => c.name === 'Sem Categoria' && c.isDefault
     );
 
-    // Reassign transactions
-    user.transactions.forEach(t => {
-      if (t.category === category.name) {
-        t.category = defaultCat.name;
-      }
-    });
+    // Reassign transactions in the separate collection
+    await transactionService.reassignCategory(userId, category.name, defaultCat.name);
 
     user.categories.pull(categoryId);
     await user.save();
