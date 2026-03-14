@@ -28,7 +28,8 @@ const transactionSchema = new mongoose.Schema({
     }
   },
   category: {
-    type: String,
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Category',
     required: [true, 'Categoria é obrigatória']
   },
   isRecurrent: {
@@ -50,6 +51,10 @@ const transactionSchema = new mongoose.Schema({
       },
       message: 'Dia de cobrança é obrigatório para transações recorrentes'
     }
+  },
+  isPaid: {
+    type: Boolean,
+    default: false
   },
   isActive: {
     type: Boolean,
@@ -73,6 +78,7 @@ const transactionSchema = new mongoose.Schema({
 // ============================================
 transactionSchema.index({ userId: 1, timestamp: -1 });
 transactionSchema.index({ userId: 1, isRecurrent: 1 });
+transactionSchema.index({ userId: 1, category: 1 });
 transactionSchema.index({ isRecurrent: 1, isActive: 1, billingDay: 1 });
 
 const Transaction = mongoose.model('Transaction', transactionSchema);

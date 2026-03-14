@@ -1,5 +1,6 @@
 const User = require('../models/User.model');
 const transactionService = require('./transaction.service');
+const categoryService = require('./category.service');
 const { deleteAvatar } = require('../utils/upload.utils');
 
 class UserService {
@@ -9,11 +10,17 @@ class UserService {
   // ============================================
 
   async createUser(userData) {
-    const user = new User({
-      ...userData,
-      categories: User.getDefaultCategories()
-    });
-    return await user.save();
+    const user = new User(userData);
+    const savedUser = await user.save();
+
+    // Seed default categories in the separate collection
+    try {
+      await categoryService.createDefaultCategories(savedUser._id);
+    } catch (error) {
+      console.error('Failed to seed default categories:', error.message);
+    }
+
+    return savedUser;
   }
 
   async findById(id) {
@@ -27,6 +34,11 @@ class UserService {
   async findByEmailWithVerification(email) {
     return await User.findOne({ email: email.toLowerCase() })
       .select('+verificationToken +verificationTokenExpires');
+  }
+
+  async findByEmailWithResetToken(email) {
+    return await User.findOne({ email: email.toLowerCase() })
+      .select('+resetPasswordToken +resetPasswordExpires');
   }
 
   async updateUser(id, updates) {
@@ -45,6 +57,7 @@ class UserService {
     if (!user) throw new Error('Usuário não encontrado');
 
     await transactionService.deleteAllUserTransactions(id);
+    await categoryService.deleteAllUserCategories(id);
     await deleteAvatar(id);  // Clean up cloud storage
     return await User.findByIdAndDelete(id);
   }
@@ -68,11 +81,12 @@ class UserService {
     if (!user) throw new Error('Usuário não encontrado');
 
     const transactionCount = await transactionService.getTransactionCount(userId);
+    const categoryCount = await categoryService.getCategoryCount(userId);
     
     const summary = user.toObject();
     summary.stats = {
       transactionCount,
-      categoryCount: user.categories.length,
+      categoryCount,
       balance: user.balance
     };
     return summary;
@@ -105,6 +119,7 @@ class UserService {
     }
 
     await transactionService.deleteAllUserTransactions(userId);
+    await categoryService.deleteAllUserCategories(userId);
     await deleteAvatar(userId);  // Clean up cloud storage
     return await User.findByIdAndDelete(userId);
   }
@@ -139,65 +154,55 @@ class UserService {
   }
 
   // ============================================
-  // Category Operations
+  // Balance Operations
   // ============================================
 
-  async getCategories(userId) {
-    const user = await User.findById(userId).select('categories');
-    return user ? user.categories : [];
+  /**
+   * Compute the signed balance delta for a transaction.
+   * credito adds to balance, debito subtracts.
+   * @param {number} value - value in cents (always positive)
+   * @param {string} type - 'credito' or 'debito'
+   * @returns {number} signed delta
+   */
+  getBalanceDelta(value, type) {
+    return type === 'credito' ? value : -value;
   }
 
-  async addCategory(userId, category) {
-    const user = await User.findById(userId);
-    if (!user) throw new Error('Usuário não encontrado');
-
-    const exists = user.categories.find(c => c.name === category.name);
-    if (exists) throw new Error('Categoria já existe');
-
-    user.categories.push(category);
-    await user.save();
-    
-    return user.categories[user.categories.length - 1];
-  }
-
-  async updateCategory(userId, categoryId, updates) {
-    const user = await User.findById(userId);
-    if (!user) throw new Error('Usuário não encontrado');
-
-    const category = user.categories.id(categoryId);
-    if (!category) throw new Error('Categoria não encontrada');
-    if (category.isDefault) {
-      throw new Error('Categoria padrão não pode ser editada');
-    }
-
-    Object.assign(category, updates);
-    await user.save();
-    
-    return category;
-  }
-
-  async deleteCategory(userId, categoryId) {
-    const user = await User.findById(userId);
-    if (!user) throw new Error('Usuário não encontrado');
-
-    const category = user.categories.id(categoryId);
-    if (!category) throw new Error('Categoria não encontrada');
-    if (category.isDefault) {
-      throw new Error('Categoria padrão não pode ser excluída');
-    }
-
-    // Find default category
-    const defaultCat = user.categories.find(
-      c => c.name === 'Sem Categoria' && c.isDefault
+  /**
+   * Atomically adjust the user's balance by a signed delta (in cents).
+   * Uses $inc to avoid race conditions.
+   */
+  async adjustBalance(userId, delta) {
+    return await User.findByIdAndUpdate(
+      userId,
+      { $inc: { balance: delta } },
+      { new: true }
     );
+  }
 
-    // Reassign transactions in the separate collection
-    await transactionService.reassignCategory(userId, category.name, defaultCat.name);
+  /**
+   * Set the user's balance to an explicit value (manual override).
+   * @param {string} userId
+   * @param {number} balanceInCents
+   */
+  async setBalance(userId, balanceInCents) {
+    return await User.findByIdAndUpdate(
+      userId,
+      { $set: { balance: balanceInCents } },
+      { new: true, runValidators: true }
+    );
+  }
 
-    user.categories.pull(categoryId);
-    await user.save();
-    
-    return { message: 'Categoria excluída' };
+  // ============================================
+  // Token Revocation
+  // ============================================
+
+  async incrementTokenVersion(userId) {
+    return await User.findByIdAndUpdate(
+      userId,
+      { $inc: { tokenVersion: 1 } },
+      { new: true }
+    );
   }
 }
 

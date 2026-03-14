@@ -13,6 +13,7 @@ const adminRouter = require('./routes/admin.routes.js');
 const requestLogger = require('./middlewares/requestLogger');
 const errorHandler = require('./middlewares/errorHandler');
 const { authLimiter, apiLimiter } = require('./middlewares/rateLimiter.middleware');
+const { csrfProtection } = require('./middlewares/csrf.middleware');
 
 const app = express();
 
@@ -30,13 +31,16 @@ app.use(cors({
 }));
 
 
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
 app.use(requestLogger);
+app.use(csrfProtection);
 
 // Apply strict rate limiting to auth endpoints only
 app.use('/api/v1/users/login', authLimiter);
 app.use('/api/v1/users/register', authLimiter);
+app.use('/api/v1/users/forgot-password', authLimiter);
+app.use('/api/v1/users/reset-password', authLimiter);
 
 // API v1 routes
 app.use('/api/v1/records', apiLimiter, financialRecordsRouter);
@@ -44,14 +48,16 @@ app.use('/api/v1/users', userDataRouter);
 app.use('/api/v1/categories', apiLimiter, categoriesRouter);
 app.use('/api/v1/admin', apiLimiter, adminRouter);
 
-app.get('/test-env', (req, res) => {
+if (process.env.NODE_ENV === 'development') {
+  app.get('/test-env', (req, res) => {
     res.json({
         hasAccessSecret: !!process.env.JWT_ACCESS_SECRET,
         hasRefreshSecret: !!process.env.JWT_REFRESH_SECRET,
         nodeEnv: process.env.NODE_ENV,
         frontendUrl: process.env.FRONTEND_URL
     });
-});
+  });
+}
 
 app.get('/health', (req, res) => {
   const dbStatus = require('./config/database').getStatus();

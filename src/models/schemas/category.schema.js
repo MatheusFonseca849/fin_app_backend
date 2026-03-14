@@ -2,6 +2,12 @@ const mongoose = require('mongoose');
 const { TRANSACTION_TYPE_VALUES } = require('../../constants/transactionTypes');
 
 const categorySchema = new mongoose.Schema({
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: [true, 'Usuário é obrigatório'],
+    index: true
+  },
   name: {
     type: String,
     required: [true, 'Nome da categoria é obrigatório'],
@@ -17,11 +23,18 @@ const categorySchema = new mongoose.Schema({
     type: String,
     required: [true, 'Cor é obrigatória'],
     match: [/^#[0-9A-F]{6}$/i, 'Cor inválida (use #RRGGBB)']
-  },
-  isDefault: {
-    type: Boolean,
-    default: false
   }
-}, { _id: true });
+}, {
+  timestamps: true,
+  collection: 'categories'
+});
 
-module.exports = categorySchema;
+// ============================================
+// INDEXES
+// ============================================
+categorySchema.index({ userId: 1, name: 1 }, { unique: true });
+categorySchema.index({ userId: 1, type: 1 });
+
+const Category = mongoose.model('Category', categorySchema);
+
+module.exports = Category;

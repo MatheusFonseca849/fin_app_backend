@@ -24,6 +24,13 @@ const authenticateToken = async (req, res, next) => {
       );
     }
 
+    // Validate tokenVersion — reject revoked access tokens
+    if (decoded.tokenVersion !== undefined && decoded.tokenVersion !== user.tokenVersion) {
+      return res.status(401).json(
+        createError(401, 'Token revogado')
+      );
+    }
+
     // Attach user to request (without password)
     const { password, ...userWithoutPassword } = user.toObject();
     req.user = { ...userWithoutPassword, id: user._id.toString() };
@@ -31,8 +38,8 @@ const authenticateToken = async (req, res, next) => {
     next();
   } catch (error) {
     console.error('Auth middleware error:', error);
-    return res.status(403).json(
-      createError(403, 'Token inválido ou expirado')
+    return res.status(401).json(
+      createError(401, 'Token inválido ou expirado')
     );
   }
 };

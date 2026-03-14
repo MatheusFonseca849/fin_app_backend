@@ -6,7 +6,7 @@ const { hashPassword, comparePassword, validatePasswordStrength } = require('../
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt.utils');
 const { generateVerificationToken, hashToken } = require('../utils/verification.utils');
 const { authenticateToken } = require('../middlewares/auth.middleware');
-const { registerValidation, loginValidation, updateUserValidation } = require('../middlewares/validators');
+const { registerValidation, loginValidation, updateUserValidation, forgotPasswordValidation, resetPasswordValidation } = require('../middlewares/validators');
 const multer = require('multer');
 const { uploadAvatar } = require('../utils/upload.utils');
 const cacheService = require('../services/cache.service');
@@ -59,7 +59,7 @@ router.post('/register', registerValidation, async (req, res) => {
     const { rawToken, hashedToken } = generateVerificationToken();
 
     // Create user (unverified)
-    const user = await userService.createUser({
+    await userService.createUser({
       firstName,
       lastName,
       email,
@@ -182,6 +182,85 @@ router.post('/resend-verification', async (req, res) => {
 });
 
 /**
+ * POST /users/forgot-password
+ * Request password reset email
+ */
+router.post('/forgot-password', forgotPasswordValidation, async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const user = await userService.findByEmail(email);
+
+    // Always return success. Prevents email enumeration
+    if (!user || !user.isVerified) {
+      return res.json({ message: 'Se o email estiver cadastrado, um link de redefinição será enviado.' });
+    }
+
+    // Generate reset token (reuse same utility as email verification)
+    const { rawToken, hashedToken } = generateVerificationToken();
+
+    // Store hashed token + 1h expiry on user doc
+    user.resetPasswordToken = hashedToken;
+    user.resetPasswordExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    await user.save();
+
+    // Send reset email
+    try {
+      await emailService.sendPasswordResetEmail(email, rawToken);
+    } catch (emailError) {
+      console.error('Password reset email error:', emailError);
+    }
+
+    res.json({ message: 'Se o email estiver cadastrado, um link de redefinição será enviado.' });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json(createError(500, 'Erro ao processar solicitação'));
+  }
+});
+
+/**
+ * POST /users/reset-password
+ * Reset password using token from email
+ */
+router.post('/reset-password', resetPasswordValidation, async (req, res) => {
+  try {
+    const { token, email, password } = req.body;
+
+    // Find user with reset token fields
+    const user = await userService.findByEmailWithResetToken(email);
+    if (!user) {
+      return res.status(400).json(
+        createError(400, 'Token inválido ou expirado')
+      );
+    }
+
+    const hashedToken = hashToken(token);
+    if (user.resetPasswordToken !== hashedToken) {
+      return res.status(400).json(
+        createError(400, 'Token inválido ou expirado')
+      );
+    }
+
+    // Check expiry
+    if (user.resetPasswordExpires < new Date()) {
+      return res.status(400).json(
+        createError(400, 'Token expirado. Solicite um novo link de redefinição.')
+      );
+    }
+
+    user.password = await hashPassword(password);
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+    await user.save();
+
+    res.json({ message: 'Senha redefinida com sucesso. Você já pode fazer login.' });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json(createError(500, 'Erro ao redefinir senha'));
+  }
+});
+
+/**
  * POST /users/login
  * Login user
  */
@@ -212,9 +291,10 @@ router.post('/login', loginValidation, async (req, res) => {
       );
     }
 
-    // Generate tokens
-    const accessToken = generateAccessToken({ id: user._id, email: user.email, role: user.role });
-    const refreshToken = generateRefreshToken({ id: user._id });
+    // Generate tokens (include tokenVersion for revocation support)
+    const tokenPayload = { id: user._id, email: user.email, role: user.role, tokenVersion: user.tokenVersion };
+    const accessToken = generateAccessToken(tokenPayload);
+    const refreshToken = generateRefreshToken({ id: user._id, tokenVersion: user.tokenVersion });
 
     // Set cookie
     res.cookie('refreshToken', refreshToken, {
@@ -266,6 +346,45 @@ router.get('/me', authenticateToken, async (req, res) => {
 });
 
 /**
+ * GET /users/balance
+ * Get current user's balance
+ */
+router.get('/balance', authenticateToken, async (req, res) => {
+  try {
+    const user = await userService.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json(createError(404, 'Usuário não encontrado'));
+    }
+    res.json({ balance: user.balance });
+  } catch (error) {
+    console.error('Get balance error:', error);
+    res.status(500).json(createError(500, 'Erro ao buscar saldo'));
+  }
+});
+
+/**
+ * PUT /users/balance
+ * Manually set user's balance (value in cents)
+ */
+router.put('/balance', authenticateToken, async (req, res) => {
+  try {
+    const { balance } = req.body;
+    if (balance === undefined || typeof balance !== 'number') {
+      return res.status(400).json(createError(400, 'Valor do saldo é obrigatório e deve ser um número (em centavos)'));
+    }
+    if (!Number.isInteger(balance)) {
+      return res.status(400).json(createError(400, 'O saldo deve ser um número inteiro (em centavos)'));
+    }
+    const user = await userService.setBalance(req.user.id, balance);
+    await cacheService.invalidateUser(req.user.id);
+    res.json({ balance: user.balance });
+  } catch (error) {
+    console.error('Set balance error:', error);
+    res.status(500).json(createError(500, 'Erro ao atualizar saldo'));
+  }
+});
+
+/**
  * PUT /users/avatar
  * Upload user avatar image
  */
@@ -301,13 +420,23 @@ router.put('/:id', authenticateToken, updateUserValidation, async (req, res) => 
       );
     }
 
-    const { firstName, lastName, email, password } = req.body;
+    const { firstName, lastName, email, password, currentPassword, preferences } = req.body;
     const updates = {};
 
     if (firstName) updates.firstName = firstName;
     if (lastName) updates.lastName = lastName;
     if (email) updates.email = email;
+    if (preferences) updates.preferences = preferences;
     if (password) {
+      // Verify current password before allowing change
+      const user = await userService.findByEmail(req.user.email);
+      if (!user) {
+        return res.status(404).json(createError(404, 'Usuário não encontrado'));
+      }
+      const isValid = await comparePassword(currentPassword, user.password);
+      if (!isValid) {
+        return res.status(401).json(createError(401, 'Senha atual incorreta'));
+      }
       updates.password = await hashPassword(password);
     }
 
@@ -345,9 +474,16 @@ router.delete('/:id', authenticateToken, async (req, res) => {
  * POST /users/logout
  * Logout user
  */
-router.post('/logout', authenticateToken, (req, res) => {
-  res.clearCookie('refreshToken');
-  res.json({ message: 'Logout realizado com sucesso' });
+router.post('/logout', authenticateToken, async (req, res) => {
+  try {
+    await userService.incrementTokenVersion(req.user.id);
+    res.clearCookie('refreshToken');
+    res.json({ message: 'Logout realizado com sucesso' });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.clearCookie('refreshToken');
+    res.json({ message: 'Logout realizado com sucesso' });
+  }
 });
 
 /**
@@ -357,7 +493,7 @@ router.post('/logout', authenticateToken, (req, res) => {
 router.post('/refresh', async (req, res) => {
   try {
     const refreshToken = req.cookies.refreshToken;
-    
+
     if (!refreshToken) {
       return res.status(401).json(
         createError(401, 'Refresh token não encontrado')
@@ -366,14 +502,21 @@ router.post('/refresh', async (req, res) => {
 
     const decoded = verifyRefreshToken(refreshToken);
     const user = await userService.findById(decoded.id);
-    
+
     if (!user) {
       return res.status(401).json(
         createError(401, 'Usuário não encontrado')
       );
     }
 
-    const accessToken = generateAccessToken({ id: user._id, email: user.email, role: user.role });
+    // Validate tokenVersion — reject revoked refresh tokens
+    if (decoded.tokenVersion !== undefined && decoded.tokenVersion !== user.tokenVersion) {
+      return res.status(401).json(
+        createError(401, 'Token revogado')
+      );
+    }
+
+    const accessToken = generateAccessToken({ id: user._id, email: user.email, role: user.role, tokenVersion: user.tokenVersion });
     res.json({ accessToken });
   } catch (error) {
     console.error('Refresh token error:', error);

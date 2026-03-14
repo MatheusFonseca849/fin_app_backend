@@ -1,6 +1,4 @@
 const mongoose = require('mongoose');
-const categorySchema = require('./schemas/category.schema');
-const { TRANSACTION_TYPES } = require('../constants/transactionTypes');
 
 const userSchema = new mongoose.Schema({
   firstName: {
@@ -53,13 +51,41 @@ const userSchema = new mongoose.Schema({
     type: Date,
     select: false
   },
+  resetPasswordToken: {
+    type: String,
+    select: false
+  },
+  resetPasswordExpires: {
+    type: Date,
+    select: false
+  },
+  tokenVersion: {
+    type: Number,
+    default: 0
+  },
   balance: {
     type: Number,
     default: 0 // Balance in cents
   },
-  categories: {
-    type: [categorySchema],
-    default: []
+  preferences: {
+    darkMode: {
+      type: Boolean,
+      default: false
+    },
+    language: {
+      type: String,
+      enum: ['pt-BR', 'en-US', 'es-MX'],
+      default: 'pt-BR'
+    },
+    currency: {
+      type: String,
+      enum: ['BRL', 'USD', 'MXN'],
+      default: 'BRL'
+    },
+    allowForeignCurrency: {
+      type: Boolean,
+      default: false
+    }
   }
 }, {
   timestamps: true,  // Adds createdAt/updatedAt
@@ -75,12 +101,6 @@ userSchema.index({ email: 1 }, { unique: true });
 // INSTANCE METHODS
 // ============================================
 
-userSchema.methods.findCategory = function(identifier) {
-  return this.categories.find(c => 
-    c.name === identifier || c._id.toString() === identifier
-  );
-};
-
 userSchema.methods.getFullName = function() {
   return `${this.firstName} ${this.lastName}`;
 };
@@ -91,20 +111,6 @@ userSchema.methods.getFullName = function() {
 
 userSchema.statics.findByEmail = function(email) {
   return this.findOne({ email: email.toLowerCase() });
-};
-
-userSchema.statics.getDefaultCategories = function() {
-  return [
-    { name: 'Alimentação', type: TRANSACTION_TYPES.DEBIT, color: '#FF6B6B', isDefault: true },
-    { name: 'Transporte', type: TRANSACTION_TYPES.DEBIT, color: '#4ECDC4', isDefault: true },
-    { name: 'Saúde', type: TRANSACTION_TYPES.DEBIT, color: '#45B7D1', isDefault: true },
-    { name: 'Contas', type: TRANSACTION_TYPES.DEBIT, color: '#FFA07A', isDefault: true },
-    { name: 'Lazer', type: TRANSACTION_TYPES.DEBIT, color: '#98D8C8', isDefault: true },
-    { name: 'Outros', type: TRANSACTION_TYPES.DEBIT, color: '#F7DC6F', isDefault: true },
-    { name: 'Salário', type: TRANSACTION_TYPES.CREDIT, color: '#82E0AA', isDefault: true },
-    { name: 'Freelance', type: TRANSACTION_TYPES.CREDIT, color: '#AED6F1', isDefault: true },
-    { name: 'Sem Categoria', type: TRANSACTION_TYPES.DEBIT, color: '#D5DBDB', isDefault: true }
-  ];
 };
 
 // ============================================

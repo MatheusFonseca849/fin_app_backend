@@ -84,6 +84,10 @@ const updateUserValidation = [
     .isEmail().withMessage('Formato de email inválido')
     .normalizeEmail(),
   
+  body('currentPassword')
+    .if(body('password').exists())
+    .notEmpty().withMessage('Senha atual é obrigatória para alterar a senha'),
+
   body('password')
     .optional()
     .isLength({ min: 6 }).withMessage('Senha deve ter no mínimo 6 caracteres')
@@ -116,12 +120,11 @@ const createTransactionValidation = [
   
   body('category')
     .optional()
-    .trim()
-    .escape(),
+    .isMongoId().withMessage('ID de categoria inválido'),
   
   body('isRecurrent')
     .optional()
-    .isBoolean().withMessage('isRecurrent deve ser verdadeiro ou falso'),
+    .isBoolean().withMessage('Recorrente deve ser verdadeiro ou falso'),
   
   body('billingDay')
     .optional()
@@ -133,6 +136,10 @@ const createTransactionValidation = [
       return true;
     }),
   
+  body('isPaid')
+    .optional()
+    .isBoolean().withMessage('Pago deve ser verdadeiro ou falso'),
+
   handleValidationErrors
 ];
 
@@ -157,8 +164,7 @@ const updateTransactionValidation = [
   
   body('category')
     .optional()
-    .trim()
-    .escape(),
+    .isMongoId().withMessage('ID de categoria inválido'),
   
   body('isRecurrent')
     .optional()
@@ -171,6 +177,10 @@ const updateTransactionValidation = [
   body('isActive')
     .optional()
     .isBoolean().withMessage('isActive deve ser verdadeiro ou falso'),
+
+  body('isPaid')
+    .optional()
+    .isBoolean().withMessage('isPaid deve ser verdadeiro ou falso'),
 
   handleValidationErrors
 ];
@@ -212,6 +222,52 @@ const adminUpdateUserValidation = [
   body('role')
     .optional()
     .isIn(['user', 'admin']).withMessage('Cargo deve ser "user" ou "admin"'),
+
+  body('currentPassword')
+    .if(body('password').exists())
+    .notEmpty().withMessage('Senha do administrador é obrigatória para alterar a senha do usuário'),
+
+  body('password')
+    .optional()
+    .isLength({ min: 6 }).withMessage('Senha deve ter no mínimo 6 caracteres')
+    .custom((value) => {
+      const passwordValidation = require('../utils/password.utils').validatePasswordStrength(value);
+      if (!passwordValidation.isValid) {
+        throw new Error(passwordValidation.message);
+      }
+      return true;
+    }),
+  
+  handleValidationErrors
+];
+
+// ============ PASSWORD RESET VALIDATIONS ============
+
+const forgotPasswordValidation = [
+  body('email')
+    .isEmail().withMessage('Formato de email inválido')
+    .normalizeEmail(),
+  
+  handleValidationErrors
+];
+
+const resetPasswordValidation = [
+  body('token')
+    .notEmpty().withMessage('Token é obrigatório'),
+  
+  body('email')
+    .isEmail().withMessage('Formato de email inválido')
+    .normalizeEmail(),
+  
+  body('password')
+    .isLength({ min: 6 }).withMessage('Senha deve ter no mínimo 6 caracteres')
+    .custom((value) => {
+      const passwordValidation = require('../utils/password.utils').validatePasswordStrength(value);
+      if (!passwordValidation.isValid) {
+        throw new Error(passwordValidation.message);
+      }
+      return true;
+    }),
   
   handleValidationErrors
 ];
@@ -246,6 +302,8 @@ module.exports = {
   registerValidation,
   loginValidation,
   updateUserValidation,
+  forgotPasswordValidation,
+  resetPasswordValidation,
   createTransactionValidation,
   updateTransactionValidation,
   transactionIdValidation,

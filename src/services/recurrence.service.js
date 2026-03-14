@@ -1,5 +1,6 @@
 const cron = require('node-cron');
 const Transaction = require('../models/schemas/transaction.schema');
+const userService = require('./user.service');
 
 class RecurrenceService {
 
@@ -56,16 +57,17 @@ class RecurrenceService {
       type: r.type,
       category: r.category,
       isRecurrent: false,
+      isPaid: r.type === 'credito', // Income is always paid; expenses need manual confirmation
       timestamp: now
     }));
 
-    let insertedCount = 0;
+    let insertedDocs = [];
     try {
       const result = await Transaction.insertMany(newTransactions, { ordered: false });
-      insertedCount = result.length;
+      insertedDocs = result;
     } catch (error) {
       // ordered:false means it continues past individual failures
-      insertedCount = error.insertedDocs?.length || 0;
+      insertedDocs = error.insertedDocs || [];
       console.error(`❌ [Recurrence] insertMany partial failure: ${error.message}`);
     }
 
@@ -83,8 +85,26 @@ class RecurrenceService {
       console.error(`❌ [Recurrence] bulkWrite error: ${error.message}`);
     }
 
-    console.log(`✅ [Recurrence] Done. Applied ${insertedCount} transaction(s) from ${recurrents.length} recurrence(s).`);
-    return insertedCount;
+    // 3. Adjust balances only for paid transactions (income is auto-paid).
+    //    Expense transactions remain unpaid until the user marks them.
+    const balanceDeltas = {};
+    for (const doc of insertedDocs) {
+      if (!doc.isPaid) continue;
+      const uid = doc.userId.toString();
+      const delta = userService.getBalanceDelta(doc.value, doc.type);
+      balanceDeltas[uid] = (balanceDeltas[uid] || 0) + delta;
+    }
+
+    for (const [uid, delta] of Object.entries(balanceDeltas)) {
+      try {
+        await userService.adjustBalance(uid, delta);
+      } catch (error) {
+        console.error(`❌ [Recurrence] Failed to adjust balance for user ${uid}:`, error.message);
+      }
+    }
+
+    console.log(`✅ [Recurrence] Done. Created ${insertedDocs.length} transaction(s) from ${recurrents.length} recurrence(s).`);
+    return insertedDocs.length;
   }
 }
 

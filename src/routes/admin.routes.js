@@ -3,6 +3,7 @@ const userService = require('../services/user.service');
 const { authenticateToken } = require('../middlewares/auth.middleware');
 const { isAdmin } = require('../middlewares/admin.middleware');
 const createError = require('../middlewares/createError');
+const { hashPassword, comparePassword } = require('../utils/password.utils');
 const { adminUpdateUserValidation, adminUserIdValidation } = require('../middlewares/validators');
 
 // All admin routes require authentication + admin role
@@ -46,12 +47,32 @@ router.get('/users/:id', adminUserIdValidation, async (req, res) => {
 
 /**
  * PUT /admin/users/:id
- * Update a user's info (name, email, role only — not password or financial data)
+ * Update a user's info (name, email, role, password)
+ * Password changes require the admin's own password for verification
  */
 router.put('/users/:id', adminUserIdValidation, adminUpdateUserValidation, async (req, res) => {
   try {
-    const { firstName, lastName, email, role } = req.body;
-    const user = await userService.adminUpdateUser(req.params.id, { firstName, lastName, email, role });
+    const { firstName, lastName, email, role, password, currentPassword } = req.body;
+    const updates = {};
+
+    if (firstName) updates.firstName = firstName;
+    if (lastName) updates.lastName = lastName;
+    if (email) updates.email = email;
+    if (role) updates.role = role;
+
+    if (password) {
+      const admin = await userService.findByEmail(req.user.email);
+      if (!admin) {
+        return res.status(404).json(createError(404, 'Administrador não encontrado'));
+      }
+      const isValid = await comparePassword(currentPassword, admin.password);
+      if (!isValid) {
+        return res.status(401).json(createError(401, 'Senha do administrador incorreta'));
+      }
+      updates.password = await hashPassword(password);
+    }
+
+    const user = await userService.adminUpdateUser(req.params.id, updates);
     res.json(user);
   } catch (error) {
     console.error('Admin update user error:', error);

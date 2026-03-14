@@ -1,5 +1,6 @@
 const router = require('express').Router();
-const userService = require('../services/user.service');
+const categoryService = require('../services/category.service');
+const transactionService = require('../services/transaction.service');
 const { authenticateToken } = require('../middlewares/auth.middleware');
 const createError = require('../middlewares/createError');
 const { createCategoryValidation, categoryIdValidation } = require('../middlewares/validators');
@@ -14,7 +15,7 @@ router.get('/', authenticateToken, async (req, res) => {
     const cached = await cacheService.getCachedCategories(req.user.id);
     if (cached) return res.json(cached);
 
-    const categories = await userService.getCategories(req.user.id);
+    const categories = await categoryService.getCategories(req.user.id);
     await cacheService.cacheCategories(req.user.id, categories);
     res.json(categories);
   } catch (error) {
@@ -30,12 +31,11 @@ router.get('/', authenticateToken, async (req, res) => {
 router.post('/', authenticateToken, createCategoryValidation, async (req, res) => {
   try {
     const { name, type, color } = req.body;
-    
-    const category = await userService.addCategory(req.user.id, {
+
+    const category = await categoryService.addCategory(req.user.id, {
       name,
       type,
-      color,
-      isDefault: false
+      color
     });
 
     await cacheService.invalidateCategories(req.user.id);
@@ -53,8 +53,8 @@ router.post('/', authenticateToken, createCategoryValidation, async (req, res) =
 router.put('/:id', authenticateToken, categoryIdValidation, async (req, res) => {
   try {
     const { name, type, color } = req.body;
-    
-    const category = await userService.updateCategory(
+
+    const category = await categoryService.updateCategory(
       req.user.id,
       req.params.id,
       { name, type, color }
@@ -74,10 +74,20 @@ router.put('/:id', authenticateToken, categoryIdValidation, async (req, res) => 
  */
 router.delete('/:id', authenticateToken, categoryIdValidation, async (req, res) => {
   try {
-    await userService.deleteCategory(req.user.id, req.params.id);
+    const { deletedId, fallbackId } = await categoryService.deleteCategory(
+      req.user.id,
+      req.params.id
+    );
+
+    // Reassign transactions from the deleted category to the fallback
+    if (fallbackId) {
+      await transactionService.reassignCategory(req.user.id, deletedId, fallbackId);
+    }
+
     await cacheService.invalidateCategories(req.user.id);
-    res.json({ 
-      message: 'Categoria excluída. Transações movidas para "Sem Categoria"' 
+    await cacheService.invalidateTransactions(req.user.id);
+    res.json({
+      message: 'Categoria excluída. Transações movidas para "Sem Categoria"'
     });
   } catch (error) {
     console.error('Delete category error:', error);

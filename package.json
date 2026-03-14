@@ -8,6 +8,7 @@
     "dev": "nodemon server.js",
     "start": "node server.js",
     "seed": "node src/scripts/seed.js",
+    "purge": "node src/scripts/purge.js",
     "promote-admin": "node src/scripts/promoteAdmin.js"
   },
   "keywords": [
