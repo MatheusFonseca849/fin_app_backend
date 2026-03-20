@@ -3,7 +3,7 @@ const categoryService = require('../services/category.service');
 const transactionService = require('../services/transaction.service');
 const { authenticateToken } = require('../middlewares/auth.middleware');
 const createError = require('../middlewares/createError');
-const { createCategoryValidation, categoryIdValidation } = require('../middlewares/validators');
+const { createCategoryValidation, updateCategoryValidation, categoryIdValidation } = require('../middlewares/validators');
 const cacheService = require('../services/cache.service');
 
 /**
@@ -30,12 +30,13 @@ router.get('/', authenticateToken, async (req, res) => {
  */
 router.post('/', authenticateToken, createCategoryValidation, async (req, res) => {
   try {
-    const { name, type, color } = req.body;
+    const { name, type, color, keywords } = req.body;
 
     const category = await categoryService.addCategory(req.user.id, {
       name,
       type,
-      color
+      color,
+      keywords
     });
 
     await cacheService.invalidateCategories(req.user.id);
@@ -50,14 +51,20 @@ router.post('/', authenticateToken, createCategoryValidation, async (req, res) =
  * PUT /categories/:id
  * Update category
  */
-router.put('/:id', authenticateToken, categoryIdValidation, async (req, res) => {
+router.put('/:id', authenticateToken, updateCategoryValidation, async (req, res) => {
   try {
-    const { name, type, color } = req.body;
+    const { name, type, color, keywords } = req.body;
+
+    const updates = {};
+    if (name !== undefined) updates.name = name;
+    if (type !== undefined) updates.type = type;
+    if (color !== undefined) updates.color = color;
+    if (keywords !== undefined) updates.keywords = keywords;
 
     const category = await categoryService.updateCategory(
       req.user.id,
       req.params.id,
-      { name, type, color }
+      updates
     );
 
     await cacheService.invalidateCategories(req.user.id);
@@ -74,6 +81,12 @@ router.put('/:id', authenticateToken, categoryIdValidation, async (req, res) => 
  */
 router.delete('/:id', authenticateToken, categoryIdValidation, async (req, res) => {
   try {
+    // Prevent deletion of "Sem Categoria"
+    const target = await categoryService.getCategoryById(req.user.id, req.params.id);
+    if (target && target.name === 'Sem Categoria') {
+      return res.status(400).json(createError(400, 'A categoria "Sem Categoria" não pode ser excluída'));
+    }
+
     const { deletedId, fallbackId } = await categoryService.deleteCategory(
       req.user.id,
       req.params.id

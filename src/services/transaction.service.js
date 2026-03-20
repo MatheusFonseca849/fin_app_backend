@@ -201,6 +201,31 @@ class TransactionService {
       { $set: { category: newCategoryId } }
     );
   }
+
+  async bulkDeleteTransactions(userId, ids) {
+    const toDelete = await Transaction.find({ _id: { $in: ids }, userId });
+    if (toDelete.length === 0) return { deletedCount: 0, deletedTransactions: [] };
+
+    const deleteIds = toDelete.map(tx => tx._id);
+    await Transaction.deleteMany({ _id: { $in: deleteIds } });
+
+    return { deletedCount: toDelete.length, deletedTransactions: toDelete };
+  }
+
+  async bulkUpdateTransactions(userId, ids, updates) {
+    const toUpdate = await Transaction.find({ _id: { $in: ids }, userId });
+    if (toUpdate.length === 0) return { updatedCount: 0, oldTransactions: [], newTransactions: [] };
+
+    const updateIds = toUpdate.map(tx => tx._id);
+    await Transaction.updateMany(
+      { _id: { $in: updateIds } },
+      { $set: updates },
+      { runValidators: true }
+    );
+
+    const newTransactions = await Transaction.find({ _id: { $in: updateIds } }).populate('category');
+    return { updatedCount: newTransactions.length, oldTransactions: toUpdate, newTransactions };
+  }
 }
 
 module.exports = new TransactionService();

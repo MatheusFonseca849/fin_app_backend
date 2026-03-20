@@ -37,7 +37,7 @@ const registerValidation = [
   
   body('email')
     .isEmail().withMessage('Formato de email inválido')
-    .normalizeEmail(),
+    .normalizeEmail({ gmail_remove_dots: false }),
   
   body('password')
     .isLength({ min: 6 }).withMessage('Senha deve ter no mínimo 6 caracteres')
@@ -55,7 +55,7 @@ const registerValidation = [
 const loginValidation = [
   body('email')
     .isEmail().withMessage('Formato de email inválido')
-    .normalizeEmail(),
+    .normalizeEmail({ gmail_remove_dots: false }),
   
   body('password')
     .notEmpty().withMessage('Senha é obrigatória'),
@@ -82,7 +82,7 @@ const updateUserValidation = [
   body('email')
     .optional()
     .isEmail().withMessage('Formato de email inválido')
-    .normalizeEmail(),
+    .normalizeEmail({ gmail_remove_dots: false }),
   
   body('currentPassword')
     .if(body('password').exists())
@@ -217,7 +217,7 @@ const adminUpdateUserValidation = [
   body('email')
     .optional()
     .isEmail().withMessage('Formato de email inválido')
-    .normalizeEmail(),
+    .normalizeEmail({ gmail_remove_dots: false }),
   
   body('role')
     .optional()
@@ -246,7 +246,7 @@ const adminUpdateUserValidation = [
 const forgotPasswordValidation = [
   body('email')
     .isEmail().withMessage('Formato de email inválido')
-    .normalizeEmail(),
+    .normalizeEmail({ gmail_remove_dots: false }),
   
   handleValidationErrors
 ];
@@ -257,7 +257,7 @@ const resetPasswordValidation = [
   
   body('email')
     .isEmail().withMessage('Formato de email inválido')
-    .normalizeEmail(),
+    .normalizeEmail({ gmail_remove_dots: false }),
   
   body('password')
     .isLength({ min: 6 }).withMessage('Senha deve ter no mínimo 6 caracteres')
@@ -288,6 +288,47 @@ const createCategoryValidation = [
     .optional()
     .matches(/^#[0-9A-Fa-f]{6}$/).withMessage('Cor deve ser um código hex válido (ex: #FF5733)'),
   
+  body('keywords')
+    .optional()
+    .isArray({ max: 50 }).withMessage('keywords deve ser um array com no máximo 50 itens'),
+  
+  body('keywords.*')
+    .optional()
+    .isString().withMessage('Cada keyword deve ser uma string')
+    .trim()
+    .isLength({ min: 1, max: 100 }).withMessage('Keyword deve ter entre 1 e 100 caracteres'),
+  
+  handleValidationErrors
+];
+
+const updateCategoryValidation = [
+  param('id')
+    .isMongoId().withMessage('ID de categoria inválido'),
+  
+  body('name')
+    .optional()
+    .trim()
+    .isLength({ max: 50 }).withMessage('Nome da categoria muito longo')
+    .escape(),
+  
+  body('type')
+    .optional()
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
+  
+  body('color')
+    .optional()
+    .matches(/^#[0-9A-Fa-f]{6}$/).withMessage('Cor deve ser um código hex válido (ex: #FF5733)'),
+  
+  body('keywords')
+    .optional()
+    .isArray({ max: 50 }).withMessage('keywords deve ser um array com no máximo 50 itens'),
+  
+  body('keywords.*')
+    .optional()
+    .isString().withMessage('Cada keyword deve ser uma string')
+    .trim()
+    .isLength({ min: 1, max: 100 }).withMessage('Keyword deve ter entre 1 e 100 caracteres'),
+  
   handleValidationErrors
 ];
 
@@ -308,6 +349,7 @@ module.exports = {
   updateTransactionValidation,
   transactionIdValidation,
   createCategoryValidation,
+  updateCategoryValidation,
   categoryIdValidation,
   adminUserIdValidation,
   adminUpdateUserValidation

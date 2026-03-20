@@ -23,6 +23,14 @@ const categorySchema = new mongoose.Schema({
     type: String,
     required: [true, 'Cor é obrigatória'],
     match: [/^#[0-9A-F]{6}$/i, 'Cor inválida (use #RRGGBB)']
+  },
+  keywords: {
+    type: [String],
+    default: [],
+    validate: {
+      validator: (arr) => arr.length <= 50,
+      message: 'Máximo de 50 palavras-chave por categoria'
+    }
   }
 }, {
   timestamps: true,

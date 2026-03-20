@@ -29,6 +29,21 @@ const userSchema = new mongoose.Schema({
     trim: true,
     match: [/^\S+@\S+\.\S+$/, 'Email inválido']
   },
+  pendingEmail: {
+    type: String,
+    default: null,
+    lowercase: true,
+    trim: true,
+    match: [/^\S+@\S+\.\S+$/, 'Email inválido']
+  },
+  pendingEmailToken: {
+    type: String,
+    select: false
+  },
+  pendingEmailTokenExpires: {
+    type: Date,
+    select: false
+  },
   password: {
     type: String,
     required: [true, 'Senha é obrigatória'],
@@ -101,7 +116,7 @@ userSchema.index({ email: 1 }, { unique: true });
 // INSTANCE METHODS
 // ============================================
 
-userSchema.methods.getFullName = function() {
+userSchema.methods.getFullName = function () {
   return `${this.firstName} ${this.lastName}`;
 };
 
@@ -109,7 +124,7 @@ userSchema.methods.getFullName = function() {
 // STATIC METHODS
 // ============================================
 
-userSchema.statics.findByEmail = function(email) {
+userSchema.statics.findByEmail = function (email) {
   return this.findOne({ email: email.toLowerCase() });
 };
 
@@ -117,14 +132,14 @@ userSchema.statics.findByEmail = function(email) {
 // MIDDLEWARE
 // ============================================
 
-userSchema.pre('save', function(next) {
+userSchema.pre('save', function (next) {
   if (this.isModified('email')) {
     this.email = this.email.toLowerCase();
   }
   next();
 });
 
-userSchema.methods.toJSON = function() {
+userSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.password;  // Don't return password in JSON
   return obj;

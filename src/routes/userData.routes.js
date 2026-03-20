@@ -422,11 +422,35 @@ router.put('/:id', authenticateToken, updateUserValidation, async (req, res) => 
 
     const { firstName, lastName, email, password, currentPassword, preferences } = req.body;
     const updates = {};
+    let emailChangeRequested = false;
 
     if (firstName) updates.firstName = firstName;
     if (lastName) updates.lastName = lastName;
-    if (email) updates.email = email;
     if (preferences) updates.preferences = preferences;
+
+    // Email change: use pending email flow instead of direct update
+    if (email && email.toLowerCase() !== req.user.email.toLowerCase()) {
+      // Check if new email is already taken
+      const emailTaken = await userService.findByEmail(email);
+      if (emailTaken) {
+        return res.status(400).json(createError(400, 'Este email já está em uso'));
+      }
+
+      const { rawToken, hashedToken } = generateVerificationToken();
+
+      updates.pendingEmail = email.toLowerCase();
+      updates.pendingEmailToken = hashedToken;
+      updates.pendingEmailTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
+
+      try {
+        await emailService.sendEmailChangeVerification(email, rawToken);
+      } catch (emailError) {
+        console.error('Email change verification error:', emailError);
+      }
+
+      emailChangeRequested = true;
+    }
+
     if (password) {
       // Verify current password before allowing change
       const user = await userService.findByEmail(req.user.email);
@@ -442,10 +466,131 @@ router.put('/:id', authenticateToken, updateUserValidation, async (req, res) => 
 
     const user = await userService.updateUser(req.user.id, updates);
     await cacheService.invalidateUser(req.user.id);
-    res.json(user);
+
+    const response = user.toJSON();
+    if (emailChangeRequested) {
+      response.message = 'Um email de verificação foi enviado para o novo endereço.';
+    }
+    res.json(response);
   } catch (error) {
     console.error('Update user error:', error);
     res.status(500).json(createError(500, 'Erro ao atualizar usuário'));
+  }
+});
+
+/**
+ * GET /users/verify-email-change
+ * Confirm pending email change via token
+ */
+router.get('/verify-email-change', async (req, res) => {
+  try {
+    const { token, email } = req.query;
+
+    if (!token || !email) {
+      return res.status(400).json(
+        createError(400, 'Token e email são obrigatórios')
+      );
+    }
+
+    const user = await userService.findByPendingEmailWithToken(email);
+    if (!user) {
+      return res.status(400).json(
+        createError(400, 'Nenhuma alteração de email pendente para este endereço')
+      );
+    }
+
+    const hashedToken = hashToken(token);
+    if (user.pendingEmailToken !== hashedToken) {
+      return res.status(400).json(
+        createError(400, 'Token de verificação inválido')
+      );
+    }
+
+    if (user.pendingEmailTokenExpires < new Date()) {
+      return res.status(400).json(
+        createError(400, 'Token de verificação expirado. Solicite uma nova alteração.')
+      );
+    }
+
+    // Race condition guard: check that the new email is still available
+    const emailTaken = await userService.findByEmail(email);
+    if (emailTaken) {
+      return res.status(400).json(
+        createError(400, 'Este email já está em uso por outra conta')
+      );
+    }
+
+    // Apply the email change
+    user.email = user.pendingEmail;
+    user.pendingEmail = null;
+    user.pendingEmailToken = undefined;
+    user.pendingEmailTokenExpires = undefined;
+    await user.save();
+
+    // Force re-login since the email in the token payload is now stale
+    await userService.incrementTokenVersion(user._id);
+    await cacheService.invalidateUser(user._id.toString());
+
+    res.json({ message: 'Email alterado com sucesso. Faça login novamente com o novo endereço.' });
+  } catch (error) {
+    console.error('Verify email change error:', error);
+    res.status(500).json(createError(500, 'Erro ao confirmar alteração de email'));
+  }
+});
+
+/**
+ * POST /users/cancel-email-change
+ * Cancel a pending email change
+ */
+router.post('/cancel-email-change', authenticateToken, async (req, res) => {
+  try {
+    const user = await userService.findById(req.user.id);
+    if (!user || !user.pendingEmail) {
+      return res.status(400).json(
+        createError(400, 'Nenhuma alteração de email pendente')
+      );
+    }
+
+    await userService.updateUser(req.user.id, {
+      pendingEmail: null,
+      pendingEmailToken: undefined,
+      pendingEmailTokenExpires: undefined
+    });
+    await cacheService.invalidateUser(req.user.id);
+
+    res.json({ message: 'Alteração de email cancelada.' });
+  } catch (error) {
+    console.error('Cancel email change error:', error);
+    res.status(500).json(createError(500, 'Erro ao cancelar alteração de email'));
+  }
+});
+
+/**
+ * POST /users/resend-email-change
+ * Resend the pending email change verification
+ */
+router.post('/resend-email-change', authenticateToken, async (req, res) => {
+  try {
+    const user = await userService.findById(req.user.id);
+    if (!user || !user.pendingEmail) {
+      return res.status(400).json(
+        createError(400, 'Nenhuma alteração de email pendente')
+      );
+    }
+
+    const { rawToken, hashedToken } = generateVerificationToken();
+
+    await userService.updateUser(req.user.id, {
+      pendingEmailToken: hashedToken,
+      pendingEmailTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000)
+    });
+
+    await emailService.sendEmailChangeVerification(user.pendingEmail, rawToken);
+
+    res.json({ message: 'Email de verificação reenviado.' });
+  } catch (error) {
+    console.error('Resend email change error:', error);
+    res.status(500).json(createError(500, 'Erro ao reenviar email de verificação'));
   }
 });
 

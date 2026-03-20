@@ -7,6 +7,8 @@ const createError = require("../middlewares/createError");
 const multer = require("multer");
 const { parse } = require("csv-parse/sync");
 const { TRANSACTION_TYPE_VALUES } = require('../constants/transactionTypes');
+const csvImportService = require('../services/csvImport.service');
+const { BANK_MAPPINGS } = require('../config/bankMappings');
 const { 
   createTransactionValidation, 
   updateTransactionValidation,
@@ -166,14 +168,26 @@ router.post("/", authenticateToken, createTransactionValidation, async (req, res
 });
 
 /**
- * POST /records/import
- * Import transactions from CSV file
- * Expected CSV format:
- * date,type,category,description,value
- * 2024-01-15,debito,Alimentação,Almoço,35.50
+ * GET /records/import/banks
+ * List available bank mapping options
+ */
+router.get("/import/banks", authenticateToken, (req, res) => {
+  const banks = Object.entries(BANK_MAPPINGS).map(([key, mapping]) => ({
+    key,
+    label: mapping.label
+  }));
+  // Always include the custom option
+  banks.push({ key: 'custom', label: 'Importação Customizada' });
+  res.json(banks);
+});
+
+/**
+ * POST /records/import/preview
+ * Upload CSV + bank selection → returns parsed preview rows for user review.
+ * Body (multipart): file, bankKey, customMapping (JSON string, only for bankKey=custom)
  */
 router.post(
-  "/import",
+  "/import/preview",
   authenticateToken,
   upload.single("file"),
   async (req, res) => {
@@ -182,104 +196,271 @@ router.post(
         return res.status(400).json(createError(400, "Nenhum arquivo enviado"));
       }
 
-      // Parse CSV
-      const csvContent = req.file.buffer.toString("utf-8");
-
-      let records;
-      try {
-        records = parse(csvContent, {
-          columns: true,
-          skip_empty_lines: true,
-          trim: true,
-        });
-      } catch (parseError) {
-        return res
-          .status(400)
-          .json(
-            createError(400, "Erro ao processar CSV: " + parseError.message),
-          );
+      const { bankKey } = req.body;
+      if (!bankKey) {
+        return res.status(400).json(createError(400, "Selecione um banco ou importação customizada"));
       }
 
-      if (!records || records.length === 0) {
-        return res
-          .status(400)
-          .json(createError(400, "Arquivo CSV vazio ou inválido"));
+      let customMapping;
+      if (bankKey === 'custom') {
+        try {
+          customMapping = JSON.parse(req.body.customMapping || '{}');
+        } catch {
+          return res.status(400).json(createError(400, "Mapeamento customizado inválido"));
+        }
       }
 
-      // Transform CSV records to transaction format
-      const transactions = records.map((record, index) => {
-        // Validate required fields
-        if (
-          !record.date ||
-          !record.type ||
-          !record.category ||
-          !record.description ||
-          !record.value
-        ) {
-          throw new Error(
-            `Linha ${index + 2}: Campos obrigatórios faltando (date, type, category, description, value)`,
-          );
-        }
-
-        // Validate type
-        if (!TRANSACTION_TYPE_VALUES.includes(record.type)) {
-          throw new Error(
-            `Linha ${index + 2}: Tipo inválido "${record.type}". Use "credito" ou "debito"`,
-          );
-        }
-
-        // Parse value and convert to cents
-        const value = parseFloat(record.value);
-        if (isNaN(value)) {
-          throw new Error(
-            `Linha ${index + 2}: Valor inválido "${record.value}"`,
-          );
-        }
-        return {
-          description: record.description,
-          value: Math.round(value * 100), // Convert to cents
-          type: record.type,
-          category: record.category,
-          timestamp: new Date(record.date),
-        };
-      });
-
-      // Bulk add transactions
-      const result = await transactionService.bulkAddTransactions(
+      const { rows, errors, headers } = await csvImportService.generatePreview(
+        req.file.buffer,
         req.user.id,
-        transactions,
+        bankKey,
+        customMapping
       );
 
-      // Compute net balance delta only for paid transactions
-      if (result.createdCount > 0 && result.insertedDocs) {
-        let netDelta = 0;
-        for (const tx of result.insertedDocs) {
-          if (tx.isPaid) {
-            netDelta += userService.getBalanceDelta(tx.value, tx.type);
-          }
-        }
-        if (netDelta !== 0) {
-          await userService.adjustBalance(req.user.id, netDelta);
-          await cacheService.invalidateUser(req.user.id);
-        }
+      res.json({ rows, errors, headers });
+    } catch (error) {
+      console.error("Import preview error:", error);
+      res.status(400).json(createError(400, error.message || "Erro ao processar CSV"));
+    }
+  }
+);
+
+/**
+ * POST /records/import/confirm
+ * Receive user-reviewed transaction rows and bulk-create them.
+ * Body: { transactions: [{ description, value, type, categoryId, date, isPaid }] }
+ */
+router.post("/import/confirm", authenticateToken, async (req, res) => {
+  try {
+    const { transactions } = req.body;
+
+    if (!Array.isArray(transactions) || transactions.length === 0) {
+      return res.status(400).json(createError(400, "Nenhuma transação para importar"));
+    }
+
+    // Validate and transform rows
+    const docs = [];
+    const validationErrors = [];
+
+    for (let i = 0; i < transactions.length; i++) {
+      const tx = transactions[i];
+      const lineLabel = `Transação ${i + 1}`;
+
+      if (!tx.description || !tx.value || !tx.type || !tx.categoryId || !tx.date) {
+        validationErrors.push(`${lineLabel}: campos obrigatórios faltando`);
+        continue;
       }
 
-      await cacheService.invalidateTransactions(req.user.id);
-      res.status(201).json({
-        message: "Importação concluída",
-        createdCount: result.createdCount,
-        skippedCount: result.skippedCount,
-        errorCount: result.errorCount,
-        errors: result.errors,
+      if (!TRANSACTION_TYPE_VALUES.includes(tx.type)) {
+        validationErrors.push(`${lineLabel}: tipo inválido "${tx.type}"`);
+        continue;
+      }
+
+      const value = parseFloat(tx.value);
+      if (isNaN(value) || value <= 0) {
+        validationErrors.push(`${lineLabel}: valor inválido`);
+        continue;
+      }
+
+      // Verify category belongs to user
+      const category = await categoryService.getCategoryById(req.user.id, tx.categoryId);
+      if (!category) {
+        validationErrors.push(`${lineLabel}: categoria não encontrada`);
+        continue;
+      }
+
+      docs.push({
+        description: tx.description,
+        value: Math.round(value * 100),
+        type: tx.type,
+        category: tx.categoryId,
+        timestamp: new Date(tx.date),
+        isPaid: tx.type === 'credito' ? true : (tx.isPaid || false)
       });
-    } catch (error) {
-      console.error("Import CSV error:", error);
-      res
-        .status(500)
-        .json(createError(500, error.message || "Erro ao importar CSV"));
     }
-  },
-);
+
+    if (docs.length === 0) {
+      return res.status(400).json(createError(400, "Nenhuma transação válida para importar", validationErrors));
+    }
+
+    // Bulk add
+    const result = await transactionService.bulkAddTransactions(req.user.id, docs);
+
+    // Adjust balance for paid transactions
+    if (result.createdCount > 0 && result.insertedDocs) {
+      let netDelta = 0;
+      for (const tx of result.insertedDocs) {
+        if (tx.isPaid) {
+          netDelta += userService.getBalanceDelta(tx.value, tx.type);
+        }
+      }
+      if (netDelta !== 0) {
+        await userService.adjustBalance(req.user.id, netDelta);
+        await cacheService.invalidateUser(req.user.id);
+      }
+    }
+
+    await cacheService.invalidateTransactions(req.user.id);
+
+    // Return updated balance
+    const user = await userService.findById(req.user.id);
+
+    res.status(201).json({
+      message: "Importação concluída",
+      createdCount: result.createdCount,
+      skippedCount: result.skippedCount,
+      errorCount: result.errorCount + validationErrors.length,
+      errors: [...validationErrors, ...result.errors],
+      balance: user.balance
+    });
+  } catch (error) {
+    console.error("Import confirm error:", error);
+    res.status(500).json(createError(500, error.message || "Erro ao importar transações"));
+  }
+});
+
+/**
+ * POST /records/bulk-delete
+ * Delete multiple transactions by IDs
+ */
+router.post("/bulk-delete", authenticateToken, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json(createError(400, "ids deve ser um array não vazio"));
+    }
+    if (ids.length > 200) {
+      return res.status(400).json(createError(400, "Máximo de 200 transações por operação"));
+    }
+
+    const { deletedCount, deletedTransactions } = await transactionService.bulkDeleteTransactions(req.user.id, ids);
+
+    // Reverse balance for paid transactions
+    let netDelta = 0;
+    for (const tx of deletedTransactions) {
+      if (tx.isPaid) {
+        netDelta -= userService.getBalanceDelta(tx.value, tx.type);
+      }
+    }
+
+    let balance;
+    if (netDelta !== 0) {
+      const updatedUser = await userService.adjustBalance(req.user.id, netDelta);
+      await cacheService.invalidateUser(req.user.id);
+      balance = updatedUser.balance;
+    } else {
+      const user = await userService.findById(req.user.id);
+      balance = user.balance;
+    }
+
+    await cacheService.invalidateTransactions(req.user.id);
+    res.json({ message: `${deletedCount} transação(ões) excluída(s)`, deletedCount, balance });
+  } catch (error) {
+    console.error("Bulk delete error:", error);
+    res.status(500).json(createError(500, error.message || "Erro ao excluir transações"));
+  }
+});
+
+/**
+ * POST /records/bulk-update
+ * Update multiple transactions with the same field values
+ */
+router.post("/bulk-update", authenticateToken, async (req, res) => {
+  try {
+    const { ids, updates } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json(createError(400, "ids deve ser um array não vazio"));
+    }
+    if (ids.length > 200) {
+      return res.status(400).json(createError(400, "Máximo de 200 transações por operação"));
+    }
+    if (!updates || typeof updates !== 'object' || Object.keys(updates).length === 0) {
+      return res.status(400).json(createError(400, "updates deve conter pelo menos um campo"));
+    }
+
+    // Validate category if provided
+    if (updates.category) {
+      const categoryExists = await categoryService.getCategoryById(req.user.id, updates.category);
+      if (!categoryExists) {
+        return res.status(400).json(createError(400, "Categoria não encontrada"));
+      }
+    }
+
+    // Build safe updates object
+    const safeUpdates = {};
+    const allowedFields = ['description', 'value', 'type', 'category', 'isPaid', 'isRecurrent', 'billingDay'];
+    for (const field of allowedFields) {
+      if (updates[field] !== undefined) safeUpdates[field] = updates[field];
+    }
+    if (updates.date !== undefined) safeUpdates.timestamp = new Date(updates.date);
+
+    // Income transactions are always paid.
+    // If changing type to credito, force isPaid = true for all.
+    // Otherwise, split: credito txs always keep isPaid = true, debito txs use provided value.
+    if (safeUpdates.type === 'credito') {
+      safeUpdates.isPaid = true;
+    }
+
+    let updatedCount, oldTransactions, newTransactions;
+
+    if (safeUpdates.type !== 'credito' && safeUpdates.isPaid !== undefined) {
+      // Need to protect existing credito transactions from isPaid = false
+      const Transaction = require('../models/schemas/transaction.schema');
+      const targetTxs = await Transaction.find({ _id: { $in: ids }, userId: req.user.id });
+      const creditoIds = targetTxs.filter(tx => tx.type === 'credito').map(tx => tx._id.toString());
+      const debitoIds = targetTxs.filter(tx => tx.type !== 'credito').map(tx => tx._id.toString());
+
+      // Update credito transactions with isPaid forced to true
+      const creditoUpdates = { ...safeUpdates, isPaid: true };
+      const creditoResult = creditoIds.length > 0
+        ? await transactionService.bulkUpdateTransactions(req.user.id, creditoIds, creditoUpdates)
+        : { updatedCount: 0, oldTransactions: [], newTransactions: [] };
+
+      // Update debito transactions normally
+      const debitoResult = debitoIds.length > 0
+        ? await transactionService.bulkUpdateTransactions(req.user.id, debitoIds, safeUpdates)
+        : { updatedCount: 0, oldTransactions: [], newTransactions: [] };
+
+      updatedCount = creditoResult.updatedCount + debitoResult.updatedCount;
+      oldTransactions = [...creditoResult.oldTransactions, ...debitoResult.oldTransactions];
+      newTransactions = [...creditoResult.newTransactions, ...debitoResult.newTransactions];
+    } else {
+      const result = await transactionService.bulkUpdateTransactions(req.user.id, ids, safeUpdates);
+      updatedCount = result.updatedCount;
+      oldTransactions = result.oldTransactions;
+      newTransactions = result.newTransactions;
+    }
+
+    // Recalculate balance delta
+    let netDelta = 0;
+    for (const oldTx of oldTransactions) {
+      if (oldTx.isPaid) {
+        netDelta -= userService.getBalanceDelta(oldTx.value, oldTx.type);
+      }
+    }
+    for (const newTx of newTransactions) {
+      if (newTx.isPaid) {
+        netDelta += userService.getBalanceDelta(newTx.value, newTx.type);
+      }
+    }
+
+    let balance;
+    if (netDelta !== 0) {
+      const updatedUser = await userService.adjustBalance(req.user.id, netDelta);
+      await cacheService.invalidateUser(req.user.id);
+      balance = updatedUser.balance;
+    } else {
+      const user = await userService.findById(req.user.id);
+      balance = user.balance;
+    }
+
+    await cacheService.invalidateTransactions(req.user.id);
+    res.json({ message: `${updatedCount} transação(ões) atualizada(s)`, updatedCount, balance });
+  } catch (error) {
+    console.error("Bulk update error:", error);
+    res.status(500).json(createError(500, error.message || "Erro ao atualizar transações"));
+  }
+});
 
 /**
  * GET /records/:id

@@ -41,6 +41,11 @@ class UserService {
       .select('+resetPasswordToken +resetPasswordExpires');
   }
 
+  async findByPendingEmailWithToken(pendingEmail) {
+    return await User.findOne({ pendingEmail: pendingEmail.toLowerCase() })
+      .select('+pendingEmailToken +pendingEmailTokenExpires');
+  }
+
   async updateUser(id, updates) {
     return await User.findByIdAndUpdate(
       id,
