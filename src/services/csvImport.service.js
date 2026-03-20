@@ -188,7 +188,7 @@ class CsvImportService {
         categoryName: categoryName || fallbackCategoryName,
         date: parsedDate.toISOString().split('T')[0],
         timestamp: parsedDate,
-        isPaid: type === 'credito' ? true : false
+        isPaid: true
       });
     }
 
