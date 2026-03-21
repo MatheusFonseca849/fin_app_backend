@@ -18,4 +18,13 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-module.exports = { authLimiter, apiLimiter };
+// Strict limiter for email-sending endpoints (resend verification, forgot password, etc.)
+const emailLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 3, // 3 emails per window
+  message: { error: { message: 'Muitas solicitações de email. Tente novamente em 15 minutos.', status: 429 } },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+module.exports = { authLimiter, apiLimiter, emailLimiter };

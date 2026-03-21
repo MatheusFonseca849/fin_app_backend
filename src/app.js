@@ -12,7 +12,7 @@ const categoriesRouter = require('./routes/categories.routes.js');
 const adminRouter = require('./routes/admin.routes.js');
 const requestLogger = require('./middlewares/requestLogger');
 const errorHandler = require('./middlewares/errorHandler');
-const { authLimiter, apiLimiter } = require('./middlewares/rateLimiter.middleware');
+const { authLimiter, apiLimiter, emailLimiter } = require('./middlewares/rateLimiter.middleware');
 const { csrfProtection } = require('./middlewares/csrf.middleware');
 
 const app = express();
@@ -24,12 +24,11 @@ app.use(helmet({
 }));
 
 app.use(cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3001',
+    origin: process.env.CLIENT_URL || 'http://localhost:3001',
     credentials: true, // IMPORTANT: Allows cookies to be sent
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
-
 
 app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
@@ -42,9 +41,14 @@ app.use('/api/v1/users/register', authLimiter);
 app.use('/api/v1/users/forgot-password', authLimiter);
 app.use('/api/v1/users/reset-password', authLimiter);
 
+// Apply strict rate limiting to email-sending endpoints
+app.use('/api/v1/users/forgot-password', emailLimiter);
+app.use('/api/v1/users/resend-verification', emailLimiter);
+app.use('/api/v1/users/resend-email-change', emailLimiter);
+
 // API v1 routes
 app.use('/api/v1/records', apiLimiter, financialRecordsRouter);
-app.use('/api/v1/users', userDataRouter);
+app.use('/api/v1/users', apiLimiter, userDataRouter);
 app.use('/api/v1/categories', apiLimiter, categoriesRouter);
 app.use('/api/v1/admin', apiLimiter, adminRouter);
 
@@ -54,7 +58,7 @@ if (process.env.NODE_ENV === 'development') {
         hasAccessSecret: !!process.env.JWT_ACCESS_SECRET,
         hasRefreshSecret: !!process.env.JWT_REFRESH_SECRET,
         nodeEnv: process.env.NODE_ENV,
-        frontendUrl: process.env.FRONTEND_URL
+        clientUrl: process.env.CLIENT_URL
     });
   });
 }

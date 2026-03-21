@@ -40,7 +40,7 @@ const registerValidation = [
     .normalizeEmail({ gmail_remove_dots: false }),
   
   body('password')
-    .isLength({ min: 6 }).withMessage('Senha deve ter no mínimo 6 caracteres')
+    .isLength({ min: 8 }).withMessage('Senha deve ter no mínimo 8 caracteres')
     .custom((value) => {
       const passwordValidation = require('../utils/password.utils').validatePasswordStrength(value);
       if (!passwordValidation.isValid) {
@@ -84,13 +84,29 @@ const updateUserValidation = [
     .isEmail().withMessage('Formato de email inválido')
     .normalizeEmail({ gmail_remove_dots: false }),
   
+  body('preferences.darkMode')
+    .optional()
+    .isBoolean().withMessage('darkMode deve ser verdadeiro ou falso'),
+
+  body('preferences.language')
+    .optional()
+    .isIn(['pt-BR', 'en-US', 'es-MX']).withMessage('Idioma inválido'),
+
+  body('preferences.currency')
+    .optional()
+    .isIn(['BRL', 'USD', 'MXN']).withMessage('Moeda inválida'),
+
+  body('preferences.allowForeignCurrency')
+    .optional()
+    .isBoolean().withMessage('allowForeignCurrency deve ser verdadeiro ou falso'),
+
   body('currentPassword')
     .if(body('password').exists())
     .notEmpty().withMessage('Senha atual é obrigatória para alterar a senha'),
 
   body('password')
     .optional()
-    .isLength({ min: 6 }).withMessage('Senha deve ter no mínimo 6 caracteres')
+    .isLength({ min: 8 }).withMessage('Senha deve ter no mínimo 8 caracteres')
     .custom((value) => {
       const passwordValidation = require('../utils/password.utils').validatePasswordStrength(value);
       if (!passwordValidation.isValid) {
@@ -229,7 +245,7 @@ const adminUpdateUserValidation = [
 
   body('password')
     .optional()
-    .isLength({ min: 6 }).withMessage('Senha deve ter no mínimo 6 caracteres')
+    .isLength({ min: 8 }).withMessage('Senha deve ter no mínimo 8 caracteres')
     .custom((value) => {
       const passwordValidation = require('../utils/password.utils').validatePasswordStrength(value);
       if (!passwordValidation.isValid) {
@@ -260,7 +276,7 @@ const resetPasswordValidation = [
     .normalizeEmail({ gmail_remove_dots: false }),
   
   body('password')
-    .isLength({ min: 6 }).withMessage('Senha deve ter no mínimo 6 caracteres')
+    .isLength({ min: 8 }).withMessage('Senha deve ter no mínimo 8 caracteres')
     .custom((value) => {
       const passwordValidation = require('../utils/password.utils').validatePasswordStrength(value);
       if (!passwordValidation.isValid) {

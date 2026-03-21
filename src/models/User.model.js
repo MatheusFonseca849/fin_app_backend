@@ -47,7 +47,7 @@ const userSchema = new mongoose.Schema({
   password: {
     type: String,
     required: [true, 'Senha é obrigatória'],
-    minlength: [6, 'Senha muito curta']
+    minlength: [8, 'Senha muito curta']
   },
   role: {
     type: String,
@@ -77,6 +77,14 @@ const userSchema = new mongoose.Schema({
   tokenVersion: {
     type: Number,
     default: 0
+  },
+  failedLoginAttempts: {
+    type: Number,
+    default: 0
+  },
+  lockUntil: {
+    type: Date,
+    default: null
   },
   balance: {
     type: Number,
@@ -136,7 +144,9 @@ userSchema.pre('save', function (next) {
 
 userSchema.methods.toJSON = function () {
   const obj = this.toObject();
-  delete obj.password;  // Don't return password in JSON
+  delete obj.password;
+  delete obj.failedLoginAttempts;
+  delete obj.lockUntil;
   return obj;
 };
 
