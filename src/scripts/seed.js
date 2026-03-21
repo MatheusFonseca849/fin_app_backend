@@ -2,6 +2,7 @@ require('dotenv').config();
 const database = require('../config/database');
 const User = require('../models/User.model');
 const Transaction = require('../models/schemas/transaction.schema');
+const categoryService = require('../services/category.service');
 const bcrypt = require('bcryptjs');
 const { TRANSACTION_TYPES } = require('../constants/transactionTypes');
 
@@ -10,7 +11,7 @@ async function seedDatabase() {
     await database.connect();
 
     // Check if user exists
-    const existing = await User.findByEmail('matheusfonseca@gmail.com');
+    const existing = await User.findByEmail(process.env.SEED_EMAIL);
     if (existing) {
       const txCount = await Transaction.countDocuments({ userId: existing._id });
       console.log('✅ User already exists');
@@ -21,18 +22,23 @@ async function seedDatabase() {
     }
 
     // Create user with hashed password
-    const hashedPassword = await bcrypt.hash('123456', 10);
+    const hashedPassword = await bcrypt.hash(process.env.SEED_PASSWORD, 10);
     
     const user = new User({
       firstName: 'Matheus',
       lastName: 'Fonseca',
-      email: 'matheusfonseca@gmail.com',
+      email: process.env.SEED_EMAIL,
       password: hashedPassword,
-      balance: 0,
-      categories: User.getDefaultCategories()
+      isVerified: true,
+      balance: 0
     });
 
     await user.save();
+    await categoryService.createDefaultCategories(user._id);
+
+    // Resolve category names to ObjectIds
+    const alimentacao = await categoryService.findByName(user._id, 'Alimentação');
+    const salario = await categoryService.findByName(user._id, 'Salário');
 
     // Create seed transactions in the separate collection
     const seedTransactions = [
@@ -41,7 +47,7 @@ async function seedDatabase() {
         description: 'Supermercado',
         value: 150.50,
         type: TRANSACTION_TYPES.DEBIT,
-        category: 'Alimentação',
+        category: alimentacao._id,
         timestamp: new Date('2025-10-05')
       },
       {
@@ -49,7 +55,7 @@ async function seedDatabase() {
         description: 'Salário Outubro',
         value: 3500.00,
         type: TRANSACTION_TYPES.CREDIT,
-        category: 'Salário',
+        category: salario._id,
         timestamp: new Date('2025-10-01')
       }
     ];

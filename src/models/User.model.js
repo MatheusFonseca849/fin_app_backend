@@ -1,6 +1,4 @@
 const mongoose = require('mongoose');
-const categorySchema = require('./schemas/category.schema');
-const { TRANSACTION_TYPES } = require('../constants/transactionTypes');
 
 const userSchema = new mongoose.Schema({
   firstName: {
@@ -31,10 +29,25 @@ const userSchema = new mongoose.Schema({
     trim: true,
     match: [/^\S+@\S+\.\S+$/, 'Email inválido']
   },
+  pendingEmail: {
+    type: String,
+    default: null,
+    lowercase: true,
+    trim: true,
+    match: [/^\S+@\S+\.\S+$/, 'Email inválido']
+  },
+  pendingEmailToken: {
+    type: String,
+    select: false
+  },
+  pendingEmailTokenExpires: {
+    type: Date,
+    select: false
+  },
   password: {
     type: String,
     required: [true, 'Senha é obrigatória'],
-    minlength: [6, 'Senha muito curta']
+    minlength: [8, 'Senha muito curta']
   },
   role: {
     type: String,
@@ -53,13 +66,49 @@ const userSchema = new mongoose.Schema({
     type: Date,
     select: false
   },
+  resetPasswordToken: {
+    type: String,
+    select: false
+  },
+  resetPasswordExpires: {
+    type: Date,
+    select: false
+  },
+  tokenVersion: {
+    type: Number,
+    default: 0
+  },
+  failedLoginAttempts: {
+    type: Number,
+    default: 0
+  },
+  lockUntil: {
+    type: Date,
+    default: null
+  },
   balance: {
     type: Number,
     default: 0 // Balance in cents
   },
-  categories: {
-    type: [categorySchema],
-    default: []
+  preferences: {
+    darkMode: {
+      type: Boolean,
+      default: false
+    },
+    language: {
+      type: String,
+      enum: ['pt-BR', 'en-US', 'es-MX'],
+      default: 'pt-BR'
+    },
+    currency: {
+      type: String,
+      enum: ['BRL', 'USD', 'MXN'],
+      default: 'BRL'
+    },
+    allowForeignCurrency: {
+      type: Boolean,
+      default: false
+    }
   }
 }, {
   timestamps: true,  // Adds createdAt/updatedAt
@@ -67,21 +116,10 @@ const userSchema = new mongoose.Schema({
 });
 
 // ============================================
-// INDEXES
-// ============================================
-userSchema.index({ email: 1 }, { unique: true });
-
-// ============================================
 // INSTANCE METHODS
 // ============================================
 
-userSchema.methods.findCategory = function(identifier) {
-  return this.categories.find(c => 
-    c.name === identifier || c._id.toString() === identifier
-  );
-};
-
-userSchema.methods.getFullName = function() {
+userSchema.methods.getFullName = function () {
   return `${this.firstName} ${this.lastName}`;
 };
 
@@ -89,38 +127,26 @@ userSchema.methods.getFullName = function() {
 // STATIC METHODS
 // ============================================
 
-userSchema.statics.findByEmail = function(email) {
+userSchema.statics.findByEmail = function (email) {
   return this.findOne({ email: email.toLowerCase() });
-};
-
-userSchema.statics.getDefaultCategories = function() {
-  return [
-    { name: 'Alimentação', type: TRANSACTION_TYPES.DEBIT, color: '#FF6B6B', isDefault: true },
-    { name: 'Transporte', type: TRANSACTION_TYPES.DEBIT, color: '#4ECDC4', isDefault: true },
-    { name: 'Saúde', type: TRANSACTION_TYPES.DEBIT, color: '#45B7D1', isDefault: true },
-    { name: 'Contas', type: TRANSACTION_TYPES.DEBIT, color: '#FFA07A', isDefault: true },
-    { name: 'Lazer', type: TRANSACTION_TYPES.DEBIT, color: '#98D8C8', isDefault: true },
-    { name: 'Outros', type: TRANSACTION_TYPES.DEBIT, color: '#F7DC6F', isDefault: true },
-    { name: 'Salário', type: TRANSACTION_TYPES.CREDIT, color: '#82E0AA', isDefault: true },
-    { name: 'Freelance', type: TRANSACTION_TYPES.CREDIT, color: '#AED6F1', isDefault: true },
-    { name: 'Sem Categoria', type: TRANSACTION_TYPES.DEBIT, color: '#D5DBDB', isDefault: true }
-  ];
 };
 
 // ============================================
 // MIDDLEWARE
 // ============================================
 
-userSchema.pre('save', function(next) {
+userSchema.pre('save', function (next) {
   if (this.isModified('email')) {
     this.email = this.email.toLowerCase();
   }
   next();
 });
 
-userSchema.methods.toJSON = function() {
+userSchema.methods.toJSON = function () {
   const obj = this.toObject();
-  delete obj.password;  // Don't return password in JSON
+  delete obj.password;
+  delete obj.failedLoginAttempts;
+  delete obj.lockUntil;
   return obj;
 };
 

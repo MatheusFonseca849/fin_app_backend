@@ -41,6 +41,65 @@ class EmailService {
 
     return data;
   }
+
+  async sendPasswordResetEmail(to, token) {
+    const resetUrl = `${process.env.CLIENT_URL}/reset-password?token=${token}&email=${encodeURIComponent(to)}`;
+
+    const data = await this.mg.messages.create(this.domain, {
+      from: this.from,
+      to: [to],
+      subject: 'Redefinição de Senha - Fin App',
+      text: `Olá! Você solicitou a redefinição de sua senha.\n\nClique no link abaixo para criar uma nova senha:\n\n${resetUrl}\n\nEste link expira em 1 hora.\n\nSe você não solicitou esta alteração, ignore este email. Sua senha permanecerá inalterada.`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2 style="color: #333;">Redefinição de Senha</h2>
+          <p>Olá! Você solicitou a redefinição de sua senha no Fin App.</p>
+          <p>Clique no botão abaixo para criar uma nova senha:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${resetUrl}" 
+               style="background-color: #4ECDC4; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-size: 16px;">
+              Redefinir Senha
+            </a>
+          </div>
+          <p style="color: #666; font-size: 14px;">Este link expira em 1 hora.</p>
+          <p style="color: #666; font-size: 14px;">Se você não solicitou esta alteração, ignore este email. Sua senha permanecerá inalterada.</p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+          <p style="color: #999; font-size: 12px;">Fin App - Gerenciamento Financeiro</p>
+        </div>
+      `
+    });
+
+    return data;
+  }
+  async sendEmailChangeVerification(to, token) {
+    const verificationUrl = `${process.env.CLIENT_URL}/verify-email-change?token=${token}&email=${encodeURIComponent(to)}`;
+
+    const data = await this.mg.messages.create(this.domain, {
+      from: this.from,
+      to: [to],
+      subject: 'Confirme a alteração de email - Fin App',
+      text: `Olá! Você solicitou a alteração do seu email no Fin App.\n\nClique no link abaixo para confirmar o novo endereço:\n\n${verificationUrl}\n\nEste link expira em 24 horas.\n\nSe você não solicitou esta alteração, ignore este email.`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2 style="color: #333;">Confirmação de Alteração de Email</h2>
+          <p>Olá! Você solicitou a alteração do seu email no Fin App.</p>
+          <p>Clique no botão abaixo para confirmar o novo endereço de email:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${verificationUrl}" 
+               style="background-color: #4ECDC4; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-size: 16px;">
+              Confirmar Novo Email
+            </a>
+          </div>
+          <p style="color: #666; font-size: 14px;">Este link expira em 24 horas.</p>
+          <p style="color: #666; font-size: 14px;">Se você não solicitou esta alteração, ignore este email.</p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+          <p style="color: #999; font-size: 12px;">Fin App - Gerenciamento Financeiro</p>
+        </div>
+      `
+    });
+
+    return data;
+  }
 }
 
 module.exports = new EmailService();

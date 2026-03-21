@@ -37,10 +37,10 @@ const registerValidation = [
   
   body('email')
     .isEmail().withMessage('Formato de email inválido')
-    .normalizeEmail(),
+    .normalizeEmail({ gmail_remove_dots: false }),
   
   body('password')
-    .isLength({ min: 6 }).withMessage('Senha deve ter no mínimo 6 caracteres')
+    .isLength({ min: 8 }).withMessage('Senha deve ter no mínimo 8 caracteres')
     .custom((value) => {
       const passwordValidation = require('../utils/password.utils').validatePasswordStrength(value);
       if (!passwordValidation.isValid) {
@@ -55,7 +55,7 @@ const registerValidation = [
 const loginValidation = [
   body('email')
     .isEmail().withMessage('Formato de email inválido')
-    .normalizeEmail(),
+    .normalizeEmail({ gmail_remove_dots: false }),
   
   body('password')
     .notEmpty().withMessage('Senha é obrigatória'),
@@ -82,11 +82,31 @@ const updateUserValidation = [
   body('email')
     .optional()
     .isEmail().withMessage('Formato de email inválido')
-    .normalizeEmail(),
+    .normalizeEmail({ gmail_remove_dots: false }),
   
+  body('preferences.darkMode')
+    .optional()
+    .isBoolean().withMessage('darkMode deve ser verdadeiro ou falso'),
+
+  body('preferences.language')
+    .optional()
+    .isIn(['pt-BR', 'en-US', 'es-MX']).withMessage('Idioma inválido'),
+
+  body('preferences.currency')
+    .optional()
+    .isIn(['BRL', 'USD', 'MXN']).withMessage('Moeda inválida'),
+
+  body('preferences.allowForeignCurrency')
+    .optional()
+    .isBoolean().withMessage('allowForeignCurrency deve ser verdadeiro ou falso'),
+
+  body('currentPassword')
+    .if(body('password').exists())
+    .notEmpty().withMessage('Senha atual é obrigatória para alterar a senha'),
+
   body('password')
     .optional()
-    .isLength({ min: 6 }).withMessage('Senha deve ter no mínimo 6 caracteres')
+    .isLength({ min: 8 }).withMessage('Senha deve ter no mínimo 8 caracteres')
     .custom((value) => {
       const passwordValidation = require('../utils/password.utils').validatePasswordStrength(value);
       if (!passwordValidation.isValid) {
@@ -116,12 +136,11 @@ const createTransactionValidation = [
   
   body('category')
     .optional()
-    .trim()
-    .escape(),
+    .isMongoId().withMessage('ID de categoria inválido'),
   
   body('isRecurrent')
     .optional()
-    .isBoolean().withMessage('isRecurrent deve ser verdadeiro ou falso'),
+    .isBoolean().withMessage('Recorrente deve ser verdadeiro ou falso'),
   
   body('billingDay')
     .optional()
@@ -133,6 +152,10 @@ const createTransactionValidation = [
       return true;
     }),
   
+  body('isPaid')
+    .optional()
+    .isBoolean().withMessage('Pago deve ser verdadeiro ou falso'),
+
   handleValidationErrors
 ];
 
@@ -157,8 +180,7 @@ const updateTransactionValidation = [
   
   body('category')
     .optional()
-    .trim()
-    .escape(),
+    .isMongoId().withMessage('ID de categoria inválido'),
   
   body('isRecurrent')
     .optional()
@@ -171,6 +193,10 @@ const updateTransactionValidation = [
   body('isActive')
     .optional()
     .isBoolean().withMessage('isActive deve ser verdadeiro ou falso'),
+
+  body('isPaid')
+    .optional()
+    .isBoolean().withMessage('isPaid deve ser verdadeiro ou falso'),
 
   handleValidationErrors
 ];
@@ -207,11 +233,57 @@ const adminUpdateUserValidation = [
   body('email')
     .optional()
     .isEmail().withMessage('Formato de email inválido')
-    .normalizeEmail(),
+    .normalizeEmail({ gmail_remove_dots: false }),
   
   body('role')
     .optional()
     .isIn(['user', 'admin']).withMessage('Cargo deve ser "user" ou "admin"'),
+
+  body('currentPassword')
+    .if(body('password').exists())
+    .notEmpty().withMessage('Senha do administrador é obrigatória para alterar a senha do usuário'),
+
+  body('password')
+    .optional()
+    .isLength({ min: 8 }).withMessage('Senha deve ter no mínimo 8 caracteres')
+    .custom((value) => {
+      const passwordValidation = require('../utils/password.utils').validatePasswordStrength(value);
+      if (!passwordValidation.isValid) {
+        throw new Error(passwordValidation.message);
+      }
+      return true;
+    }),
+  
+  handleValidationErrors
+];
+
+// ============ PASSWORD RESET VALIDATIONS ============
+
+const forgotPasswordValidation = [
+  body('email')
+    .isEmail().withMessage('Formato de email inválido')
+    .normalizeEmail({ gmail_remove_dots: false }),
+  
+  handleValidationErrors
+];
+
+const resetPasswordValidation = [
+  body('token')
+    .notEmpty().withMessage('Token é obrigatório'),
+  
+  body('email')
+    .isEmail().withMessage('Formato de email inválido')
+    .normalizeEmail({ gmail_remove_dots: false }),
+  
+  body('password')
+    .isLength({ min: 8 }).withMessage('Senha deve ter no mínimo 8 caracteres')
+    .custom((value) => {
+      const passwordValidation = require('../utils/password.utils').validatePasswordStrength(value);
+      if (!passwordValidation.isValid) {
+        throw new Error(passwordValidation.message);
+      }
+      return true;
+    }),
   
   handleValidationErrors
 ];
@@ -232,6 +304,47 @@ const createCategoryValidation = [
     .optional()
     .matches(/^#[0-9A-Fa-f]{6}$/).withMessage('Cor deve ser um código hex válido (ex: #FF5733)'),
   
+  body('keywords')
+    .optional()
+    .isArray({ max: 50 }).withMessage('keywords deve ser um array com no máximo 50 itens'),
+  
+  body('keywords.*')
+    .optional()
+    .isString().withMessage('Cada keyword deve ser uma string')
+    .trim()
+    .isLength({ min: 1, max: 100 }).withMessage('Keyword deve ter entre 1 e 100 caracteres'),
+  
+  handleValidationErrors
+];
+
+const updateCategoryValidation = [
+  param('id')
+    .isMongoId().withMessage('ID de categoria inválido'),
+  
+  body('name')
+    .optional()
+    .trim()
+    .isLength({ max: 50 }).withMessage('Nome da categoria muito longo')
+    .escape(),
+  
+  body('type')
+    .optional()
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
+  
+  body('color')
+    .optional()
+    .matches(/^#[0-9A-Fa-f]{6}$/).withMessage('Cor deve ser um código hex válido (ex: #FF5733)'),
+  
+  body('keywords')
+    .optional()
+    .isArray({ max: 50 }).withMessage('keywords deve ser um array com no máximo 50 itens'),
+  
+  body('keywords.*')
+    .optional()
+    .isString().withMessage('Cada keyword deve ser uma string')
+    .trim()
+    .isLength({ min: 1, max: 100 }).withMessage('Keyword deve ter entre 1 e 100 caracteres'),
+  
   handleValidationErrors
 ];
 
@@ -246,10 +359,13 @@ module.exports = {
   registerValidation,
   loginValidation,
   updateUserValidation,
+  forgotPasswordValidation,
+  resetPasswordValidation,
   createTransactionValidation,
   updateTransactionValidation,
   transactionIdValidation,
   createCategoryValidation,
+  updateCategoryValidation,
   categoryIdValidation,
   adminUserIdValidation,
   adminUpdateUserValidation

@@ -10,10 +10,10 @@ const comparePassword = async (password, hashedPassword) => {
 };
 
 const validatePasswordStrength = (password) => {
-    if (!password || password.length < 6) {
+    if (!password || password.length < 8) {
         return { 
             isValid: false, 
-            message: 'Senha deve ter no mínimo 6 caracteres' 
+            message: 'Senha deve ter no mínimo 8 caracteres' 
         };
     }
     

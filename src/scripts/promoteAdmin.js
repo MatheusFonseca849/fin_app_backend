@@ -7,7 +7,7 @@ async function promoteAdmin() {
 
   if (!email) {
     console.error('❌ Usage: node src/scripts/promoteAdmin.js <email>');
-    console.error('   Example: node src/scripts/promoteAdmin.js matheus@example.com');
+    console.error('   Example: node src/scripts/promoteAdmin.js johndoe@example.com');
     process.exit(1);
   }
 
