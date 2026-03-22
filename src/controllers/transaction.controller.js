@@ -191,6 +191,10 @@ const importConfirm = async (req, res) => {
       return res.status(400).json(createError(400, "Nenhuma transação para importar"));
     }
 
+    // Batch-load all user categories once (avoids N+1 queries in the loop)
+    const userCategories = await categoryService.getCategories(req.user.id);
+    const validCategoryIds = new Set(userCategories.map(c => c._id.toString()));
+
     // Validate and transform rows
     const docs = [];
     const validationErrors = [];
@@ -215,9 +219,8 @@ const importConfirm = async (req, res) => {
         continue;
       }
 
-      // Verify category belongs to user
-      const category = await categoryService.getCategoryById(req.user.id, tx.categoryId);
-      if (!category) {
+      // Verify category belongs to user (in-memory lookup)
+      if (!validCategoryIds.has(tx.categoryId)) {
         validationErrors.push(`${lineLabel}: categoria não encontrada`);
         continue;
       }

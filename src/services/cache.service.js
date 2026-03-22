@@ -135,6 +135,7 @@ class CacheService {
 
   async invalidateTransactions(userId) {
     await this.invalidatePattern(`user:${userId}:transactions:*`);
+    await this.del(this.keys.userDashboard(userId));
   }
 }
 

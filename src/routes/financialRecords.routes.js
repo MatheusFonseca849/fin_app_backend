@@ -5,7 +5,10 @@ const multer = require("multer");
 const { 
   createTransactionValidation, 
   updateTransactionValidation,
-  transactionIdValidation 
+  transactionIdValidation,
+  bulkDeleteValidation,
+  bulkUpdateValidation,
+  importConfirmValidation
 } = require('../middlewares/validators');
 
 const upload = multer({ 
@@ -34,13 +37,13 @@ router.get("/import/banks", authenticateToken, transactionController.getImportBa
 router.post("/import/preview", authenticateToken, upload.single("file"), transactionController.importPreview);
 
 /** POST /records/import/confirm */
-router.post("/import/confirm", authenticateToken, transactionController.importConfirm);
+router.post("/import/confirm", authenticateToken, importConfirmValidation, transactionController.importConfirm);
 
 /** POST /records/bulk-delete */
-router.post("/bulk-delete", authenticateToken, transactionController.bulkDelete);
+router.post("/bulk-delete", authenticateToken, bulkDeleteValidation, transactionController.bulkDelete);
 
 /** POST /records/bulk-update */
-router.post("/bulk-update", authenticateToken, transactionController.bulkUpdate);
+router.post("/bulk-update", authenticateToken, bulkUpdateValidation, transactionController.bulkUpdate);
 
 /** GET /records/:id */
 router.get("/:id", authenticateToken, transactionIdValidation, transactionController.getById);

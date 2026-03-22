@@ -355,6 +355,106 @@ const categoryIdValidation = [
   handleValidationErrors
 ];
 
+// ============ BULK OPERATION VALIDATIONS ============
+
+const bulkDeleteValidation = [
+  body('ids')
+    .isArray({ min: 1 }).withMessage('ids deve ser um array não vazio')
+    .custom((ids) => {
+      if (ids.length > 200) throw new Error('Máximo de 200 transações por operação');
+      return true;
+    }),
+
+  body('ids.*')
+    .isMongoId().withMessage('Cada id deve ser um ObjectId válido'),
+
+  handleValidationErrors
+];
+
+const bulkUpdateValidation = [
+  body('ids')
+    .isArray({ min: 1 }).withMessage('ids deve ser um array não vazio')
+    .custom((ids) => {
+      if (ids.length > 200) throw new Error('Máximo de 200 transações por operação');
+      return true;
+    }),
+
+  body('ids.*')
+    .isMongoId().withMessage('Cada id deve ser um ObjectId válido'),
+
+  body('updates')
+    .isObject().withMessage('updates deve ser um objeto')
+    .custom((updates) => {
+      if (Object.keys(updates).length === 0) throw new Error('updates deve conter pelo menos um campo');
+      return true;
+    }),
+
+  body('updates.description')
+    .optional()
+    .trim()
+    .isLength({ max: 500 }).withMessage('Descrição muito longa')
+    .escape(),
+
+  body('updates.value')
+    .optional()
+    .isFloat({ min: 0.01 }).withMessage('Valor deve ser um número positivo'),
+
+  body('updates.type')
+    .optional()
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
+
+  body('updates.category')
+    .optional()
+    .isMongoId().withMessage('ID de categoria inválido'),
+
+  body('updates.date')
+    .optional()
+    .isISO8601().withMessage('Data deve ser uma data válida'),
+
+  body('updates.isPaid')
+    .optional()
+    .isBoolean().withMessage('isPaid deve ser verdadeiro ou falso'),
+
+  body('updates.isRecurrent')
+    .optional()
+    .isBoolean().withMessage('isRecurrent deve ser verdadeiro ou falso'),
+
+  body('updates.billingDay')
+    .optional()
+    .isInt({ min: 1, max: 31 }).withMessage('Dia de cobrança deve ser entre 1 e 31'),
+
+  handleValidationErrors
+];
+
+const importConfirmValidation = [
+  body('transactions')
+    .isArray({ min: 1 }).withMessage('Nenhuma transação para importar'),
+
+  body('transactions.*.description')
+    .trim()
+    .notEmpty().withMessage('Descrição é obrigatória')
+    .isLength({ max: 500 }).withMessage('Descrição muito longa'),
+
+  body('transactions.*.value')
+    .isFloat({ min: 0.01 }).withMessage('Valor deve ser um número positivo'),
+
+  body('transactions.*.type')
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
+
+  body('transactions.*.categoryId')
+    .isMongoId().withMessage('ID de categoria inválido'),
+
+  body('transactions.*.date')
+    .notEmpty().withMessage('Data é obrigatória')
+    .isISO8601().withMessage('Data deve ser uma data válida'),
+
+  body('transactions.*.isPaid')
+    .optional()
+    .isBoolean().withMessage('isPaid deve ser verdadeiro ou falso'),
+
+  handleValidationErrors
+];
+
 module.exports = {
   registerValidation,
   loginValidation,
@@ -368,5 +468,8 @@ module.exports = {
   updateCategoryValidation,
   categoryIdValidation,
   adminUserIdValidation,
-  adminUpdateUserValidation
+  adminUpdateUserValidation,
+  bulkDeleteValidation,
+  bulkUpdateValidation,
+  importConfirmValidation
 };
