@@ -70,7 +70,13 @@ const transactionSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true,
-  collection: 'transactions'
+  collection: 'transactions',
+  toJSON: {
+    transform(doc, ret) {
+      delete ret.__v;
+      return ret;
+    }
+  }
 });
 
 // ============================================

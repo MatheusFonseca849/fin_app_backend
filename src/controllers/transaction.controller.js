@@ -6,6 +6,8 @@ const createError = require('../middlewares/createError');
 const { TRANSACTION_TYPE_VALUES } = require('../constants/transactionTypes');
 const { BANK_MAPPINGS } = require('../config/bankMappings');
 const cacheService = require('../services/cache.service');
+const { acquireLock } = require('../utils/lock.utils');
+const redisClient = require('../config/redis');
 
 const getAll = async (req, res) => {
   try {
@@ -234,36 +236,49 @@ const importConfirm = async (req, res) => {
       return res.status(400).json(createError(400, "Nenhuma transação válida para importar", validationErrors));
     }
 
-    // Bulk add
-    const result = await transactionService.bulkAddTransactions(req.user.id, docs);
-
-    // Adjust balance for paid transactions
-    if (result.createdCount > 0 && result.insertedDocs) {
-      let netDelta = 0;
-      for (const tx of result.insertedDocs) {
-        if (tx.isPaid) {
-          netDelta += userService.getBalanceDelta(tx.value, tx.type);
-        }
-      }
-      if (netDelta !== 0) {
-        await userService.adjustBalance(req.user.id, netDelta);
-        await cacheService.invalidateUser(req.user.id);
+    // Per-user lock: prevent duplicate imports from concurrent requests
+    let release = null;
+    if (redisClient.isConnected) {
+      release = await acquireLock(`lock:user:${req.user.id}:bulk`, 60);
+      if (!release) {
+        return res.status(409).json(createError(409, "Outra operação em massa está em andamento. Aguarde."));
       }
     }
 
-    await cacheService.invalidateTransactions(req.user.id);
+    try {
+      // Bulk add
+      const result = await transactionService.bulkAddTransactions(req.user.id, docs);
 
-    // Return updated balance
-    const user = await userService.findById(req.user.id);
+      // Adjust balance for paid transactions
+      if (result.createdCount > 0 && result.insertedDocs) {
+        let netDelta = 0;
+        for (const tx of result.insertedDocs) {
+          if (tx.isPaid) {
+            netDelta += userService.getBalanceDelta(tx.value, tx.type);
+          }
+        }
+        if (netDelta !== 0) {
+          await userService.adjustBalance(req.user.id, netDelta);
+          await cacheService.invalidateUser(req.user.id);
+        }
+      }
 
-    res.status(201).json({
-      message: "Importação concluída",
-      createdCount: result.createdCount,
-      skippedCount: result.skippedCount,
-      errorCount: result.errorCount + validationErrors.length,
-      errors: [...validationErrors, ...result.errors],
-      balance: user.balance
-    });
+      await cacheService.invalidateTransactions(req.user.id);
+
+      // Return updated balance
+      const user = await userService.findById(req.user.id);
+
+      res.status(201).json({
+        message: "Importação concluída",
+        createdCount: result.createdCount,
+        skippedCount: result.skippedCount,
+        errorCount: result.errorCount + validationErrors.length,
+        errors: [...validationErrors, ...result.errors],
+        balance: user.balance
+      });
+    } finally {
+      if (release) await release();
+    }
   } catch (error) {
     console.error("Import confirm error:", error);
     res.status(500).json(createError(500, error.message || "Erro ao importar transações"));
@@ -280,28 +295,41 @@ const bulkDelete = async (req, res) => {
       return res.status(400).json(createError(400, "Máximo de 200 transações por operação"));
     }
 
-    const { deletedCount, deletedTransactions } = await transactionService.bulkDeleteTransactions(req.user.id, ids);
-
-    // Reverse balance for paid transactions
-    let netDelta = 0;
-    for (const tx of deletedTransactions) {
-      if (tx.isPaid) {
-        netDelta -= userService.getBalanceDelta(tx.value, tx.type);
+    // Per-user lock: prevent concurrent bulk mutations
+    let release = null;
+    if (redisClient.isConnected) {
+      release = await acquireLock(`lock:user:${req.user.id}:bulk`, 60);
+      if (!release) {
+        return res.status(409).json(createError(409, "Outra operação em massa está em andamento. Aguarde."));
       }
     }
 
-    let balance;
-    if (netDelta !== 0) {
-      const updatedUser = await userService.adjustBalance(req.user.id, netDelta);
-      await cacheService.invalidateUser(req.user.id);
-      balance = updatedUser.balance;
-    } else {
-      const user = await userService.findById(req.user.id);
-      balance = user.balance;
-    }
+    try {
+      const { deletedCount, deletedTransactions } = await transactionService.bulkDeleteTransactions(req.user.id, ids);
 
-    await cacheService.invalidateTransactions(req.user.id);
-    res.json({ message: `${deletedCount} transação(ões) excluída(s)`, deletedCount, balance });
+      // Reverse balance for paid transactions
+      let netDelta = 0;
+      for (const tx of deletedTransactions) {
+        if (tx.isPaid) {
+          netDelta -= userService.getBalanceDelta(tx.value, tx.type);
+        }
+      }
+
+      let balance;
+      if (netDelta !== 0) {
+        const updatedUser = await userService.adjustBalance(req.user.id, netDelta);
+        await cacheService.invalidateUser(req.user.id);
+        balance = updatedUser.balance;
+      } else {
+        const user = await userService.findById(req.user.id);
+        balance = user.balance;
+      }
+
+      await cacheService.invalidateTransactions(req.user.id);
+      res.json({ message: `${deletedCount} transação(ões) excluída(s)`, deletedCount, balance });
+    } finally {
+      if (release) await release();
+    }
   } catch (error) {
     console.error("Bulk delete error:", error);
     res.status(500).json(createError(500, error.message || "Erro ao excluir transações"));
@@ -344,61 +372,74 @@ const bulkUpdate = async (req, res) => {
       safeUpdates.isPaid = true;
     }
 
-    let updatedCount, oldTransactions, newTransactions;
-
-    if (safeUpdates.type !== 'credito' && safeUpdates.isPaid !== undefined) {
-      // Need to protect existing credito transactions from isPaid = false
-      const Transaction = require('../models/schemas/transaction.schema');
-      const targetTxs = await Transaction.find({ _id: { $in: ids }, userId: req.user.id });
-      const creditoIds = targetTxs.filter(tx => tx.type === 'credito').map(tx => tx._id.toString());
-      const debitoIds = targetTxs.filter(tx => tx.type !== 'credito').map(tx => tx._id.toString());
-
-      // Update credito transactions with isPaid forced to true
-      const creditoUpdates = { ...safeUpdates, isPaid: true };
-      const creditoResult = creditoIds.length > 0
-        ? await transactionService.bulkUpdateTransactions(req.user.id, creditoIds, creditoUpdates)
-        : { updatedCount: 0, oldTransactions: [], newTransactions: [] };
-
-      // Update debito transactions normally
-      const debitoResult = debitoIds.length > 0
-        ? await transactionService.bulkUpdateTransactions(req.user.id, debitoIds, safeUpdates)
-        : { updatedCount: 0, oldTransactions: [], newTransactions: [] };
-
-      updatedCount = creditoResult.updatedCount + debitoResult.updatedCount;
-      oldTransactions = [...creditoResult.oldTransactions, ...debitoResult.oldTransactions];
-      newTransactions = [...creditoResult.newTransactions, ...debitoResult.newTransactions];
-    } else {
-      const result = await transactionService.bulkUpdateTransactions(req.user.id, ids, safeUpdates);
-      updatedCount = result.updatedCount;
-      oldTransactions = result.oldTransactions;
-      newTransactions = result.newTransactions;
-    }
-
-    // Recalculate balance delta
-    let netDelta = 0;
-    for (const oldTx of oldTransactions) {
-      if (oldTx.isPaid) {
-        netDelta -= userService.getBalanceDelta(oldTx.value, oldTx.type);
-      }
-    }
-    for (const newTx of newTransactions) {
-      if (newTx.isPaid) {
-        netDelta += userService.getBalanceDelta(newTx.value, newTx.type);
+    // Per-user lock: prevent concurrent bulk mutations
+    let release = null;
+    if (redisClient.isConnected) {
+      release = await acquireLock(`lock:user:${req.user.id}:bulk`, 60);
+      if (!release) {
+        return res.status(409).json(createError(409, "Outra operação em massa está em andamento. Aguarde."));
       }
     }
 
-    let balance;
-    if (netDelta !== 0) {
-      const updatedUser = await userService.adjustBalance(req.user.id, netDelta);
-      await cacheService.invalidateUser(req.user.id);
-      balance = updatedUser.balance;
-    } else {
-      const user = await userService.findById(req.user.id);
-      balance = user.balance;
-    }
+    try {
+      let updatedCount, oldTransactions, newTransactions;
 
-    await cacheService.invalidateTransactions(req.user.id);
-    res.json({ message: `${updatedCount} transação(ões) atualizada(s)`, updatedCount, balance });
+      if (safeUpdates.type !== 'credito' && safeUpdates.isPaid !== undefined) {
+        // Need to protect existing credito transactions from isPaid = false
+        const Transaction = require('../models/schemas/transaction.schema');
+        const targetTxs = await Transaction.find({ _id: { $in: ids }, userId: req.user.id });
+        const creditoIds = targetTxs.filter(tx => tx.type === 'credito').map(tx => tx._id.toString());
+        const debitoIds = targetTxs.filter(tx => tx.type !== 'credito').map(tx => tx._id.toString());
+
+        // Update credito transactions with isPaid forced to true
+        const creditoUpdates = { ...safeUpdates, isPaid: true };
+        const creditoResult = creditoIds.length > 0
+          ? await transactionService.bulkUpdateTransactions(req.user.id, creditoIds, creditoUpdates)
+          : { updatedCount: 0, oldTransactions: [], newTransactions: [] };
+
+        // Update debito transactions normally
+        const debitoResult = debitoIds.length > 0
+          ? await transactionService.bulkUpdateTransactions(req.user.id, debitoIds, safeUpdates)
+          : { updatedCount: 0, oldTransactions: [], newTransactions: [] };
+
+        updatedCount = creditoResult.updatedCount + debitoResult.updatedCount;
+        oldTransactions = [...creditoResult.oldTransactions, ...debitoResult.oldTransactions];
+        newTransactions = [...creditoResult.newTransactions, ...debitoResult.newTransactions];
+      } else {
+        const result = await transactionService.bulkUpdateTransactions(req.user.id, ids, safeUpdates);
+        updatedCount = result.updatedCount;
+        oldTransactions = result.oldTransactions;
+        newTransactions = result.newTransactions;
+      }
+
+      // Recalculate balance delta
+      let netDelta = 0;
+      for (const oldTx of oldTransactions) {
+        if (oldTx.isPaid) {
+          netDelta -= userService.getBalanceDelta(oldTx.value, oldTx.type);
+        }
+      }
+      for (const newTx of newTransactions) {
+        if (newTx.isPaid) {
+          netDelta += userService.getBalanceDelta(newTx.value, newTx.type);
+        }
+      }
+
+      let balance;
+      if (netDelta !== 0) {
+        const updatedUser = await userService.adjustBalance(req.user.id, netDelta);
+        await cacheService.invalidateUser(req.user.id);
+        balance = updatedUser.balance;
+      } else {
+        const user = await userService.findById(req.user.id);
+        balance = user.balance;
+      }
+
+      await cacheService.invalidateTransactions(req.user.id);
+      res.json({ message: `${updatedCount} transação(ões) atualizada(s)`, updatedCount, balance });
+    } finally {
+      if (release) await release();
+    }
   } catch (error) {
     console.error("Bulk update error:", error);
     res.status(500).json(createError(500, error.message || "Erro ao atualizar transações"));

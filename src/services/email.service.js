@@ -3,16 +3,31 @@ const Mailgun = require('mailgun.js');
 
 class EmailService {
   constructor() {
-    const mailgun = new Mailgun(FormData);
-    this.mg = mailgun.client({
-      username: 'api',
-      key: process.env.MAILGUN_API_KEY
-    });
-    this.domain = process.env.MAILGUN_DOMAIN;
-    this.from = process.env.MAILGUN_FROM || `Fin App <postmaster@${this.domain}>`;
+    this.enabled = !!(process.env.MAILGUN_API_KEY && process.env.MAILGUN_DOMAIN);
+
+    if (this.enabled) {
+      const mailgun = new Mailgun(FormData);
+      this.mg = mailgun.client({
+        username: 'api',
+        key: process.env.MAILGUN_API_KEY
+      });
+      this.domain = process.env.MAILGUN_DOMAIN;
+      this.from = process.env.MAILGUN_FROM || `Fin App <postmaster@${this.domain}>`;
+    } else {
+      console.warn('⚠️  Email service disabled: MAILGUN_API_KEY or MAILGUN_DOMAIN not set.');
+    }
+  }
+
+  _ensureEnabled() {
+    if (!this.enabled) {
+      console.warn('⚠️  Email send skipped — email service not configured.');
+      return false;
+    }
+    return true;
   }
 
   async sendVerificationEmail(to, token) {
+    if (!this._ensureEnabled()) return null;
     const verificationUrl = `${process.env.CLIENT_URL}/verify-email?token=${token}&email=${encodeURIComponent(to)}`;
 
     const data = await this.mg.messages.create(this.domain, {
@@ -43,6 +58,7 @@ class EmailService {
   }
 
   async sendPasswordResetEmail(to, token) {
+    if (!this._ensureEnabled()) return null;
     const resetUrl = `${process.env.CLIENT_URL}/reset-password?token=${token}&email=${encodeURIComponent(to)}`;
 
     const data = await this.mg.messages.create(this.domain, {
@@ -72,6 +88,7 @@ class EmailService {
     return data;
   }
   async sendEmailChangeVerification(to, token) {
+    if (!this._ensureEnabled()) return null;
     const verificationUrl = `${process.env.CLIENT_URL}/verify-email-change?token=${token}&email=${encodeURIComponent(to)}`;
 
     const data = await this.mg.messages.create(this.domain, {

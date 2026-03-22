@@ -34,7 +34,13 @@ const categorySchema = new mongoose.Schema({
   }
 }, {
   timestamps: true,
-  collection: 'categories'
+  collection: 'categories',
+  toJSON: {
+    transform(doc, ret) {
+      delete ret.__v;
+      return ret;
+    }
+  }
 });
 
 // ============================================
