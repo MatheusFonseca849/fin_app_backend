@@ -26,7 +26,8 @@ class TransactionService {
         .populate('category')
         .sort({ timestamp: -1 })
         .skip((safePage - 1) * safeLimit)
-        .limit(safeLimit),
+        .limit(safeLimit)
+        .lean(),
       Transaction.countDocuments(filter)
     ]);
 
@@ -38,7 +39,7 @@ class TransactionService {
   }
 
   async getTransactionById(userId, transactionId) {
-    return await Transaction.findOne({ _id: transactionId, userId }).populate('category');
+    return await Transaction.findOne({ _id: transactionId, userId }).populate('category').lean();
   }
 
   async addTransaction(userId, transactionData) {
@@ -177,6 +178,92 @@ class TransactionService {
       },
       { $sort: { '_id.year': 1, '_id.month': 1 } }
     ]);
+  }
+
+  /**
+   * Returns current-month summary (expenses by category, totals) and upcoming unpaid expenses.
+   * Single aggregation + one query — replaces the need for the frontend to fetch ALL transactions.
+   */
+  async getDashboardData(userId) {
+    const mongoose = require('mongoose');
+    const objectId = mongoose.Types.ObjectId.createFromHexString(userId);
+
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const [categoryBreakdown, upcomingExpenses] = await Promise.all([
+      // Current month paid transactions grouped by category
+      Transaction.aggregate([
+        {
+          $match: {
+            userId: objectId,
+            isPaid: true,
+            timestamp: { $gte: monthStart, $lte: monthEnd }
+          }
+        },
+        {
+          $lookup: {
+            from: 'categories',
+            localField: 'category',
+            foreignField: '_id',
+            as: 'cat'
+          }
+        },
+        { $unwind: { path: '$cat', preserveNullAndEmptyArrays: true } },
+        {
+          $group: {
+            _id: {
+              type: '$type',
+              categoryId: '$cat._id',
+              categoryName: { $ifNull: ['$cat.name', 'Sem Categoria'] },
+              categoryColor: { $ifNull: ['$cat.color', '#757575'] }
+            },
+            total: { $sum: '$value' }
+          }
+        }
+      ]),
+
+      // Upcoming unpaid expenses (next 4, from today onwards)
+      Transaction.find({
+        userId: objectId,
+        type: 'debito',
+        isPaid: false,
+        timestamp: { $gte: today }
+      })
+        .populate('category')
+        .sort({ timestamp: 1 })
+        .limit(4)
+        .lean()
+    ]);
+
+    // Process aggregation into structured response
+    let monthlyExpenses = 0;
+    let monthlyIncome = 0;
+    const expensesByCategory = [];
+
+    for (const item of categoryBreakdown) {
+      if (item._id.type === 'debito') {
+        monthlyExpenses += item.total;
+        expensesByCategory.push({
+          name: item._id.categoryName,
+          color: item._id.categoryColor,
+          value: item.total
+        });
+      } else {
+        monthlyIncome += item.total;
+      }
+    }
+
+    return {
+      monthlyExpenses,
+      monthlyIncome,
+      monthlyBalance: monthlyIncome - monthlyExpenses,
+      expensesByCategory,
+      upcomingExpenses
+    };
   }
 
   async getUserBalance(userId) {

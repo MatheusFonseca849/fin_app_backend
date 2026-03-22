@@ -21,6 +21,9 @@ router.get("/", authenticateToken, transactionController.getAll);
 /** GET /records/monthly-summary */
 router.get("/monthly-summary", authenticateToken, transactionController.getMonthlySummary);
 
+/** GET /records/dashboard */
+router.get("/dashboard", authenticateToken, transactionController.getDashboard);
+
 /** POST /records */
 router.post("/", authenticateToken, createTransactionValidation, transactionController.create);
 
