@@ -6,7 +6,17 @@ const createError = require('./createError');
  * Express recognizes it as an error handler by the 4-param signature.
  */
 const errorHandler = (err, req, res, next) => {
-  console.error('Unhandled error:', err);
+  // Only log stack traces in non-production for readability
+  if (process.env.NODE_ENV === 'production') {
+    console.error('Unhandled error:', err.message);
+  } else {
+    console.error('Unhandled error:', err);
+  }
+
+  // CORS errors
+  if (err.message === 'Not allowed by CORS') {
+    return res.status(403).json(createError(403, 'Origin not allowed'));
+  }
 
   // Mongoose validation error
   if (err.name === 'ValidationError') {

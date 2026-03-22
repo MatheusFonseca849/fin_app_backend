@@ -1,4 +1,9 @@
 require('dotenv').config();
+const { validateEnv } = require('./src/utils/envValidator');
+
+// Fail fast if required env vars are missing
+validateEnv();
+
 const app = require('./src/app');
 const database = require('./src/config/database');
 const recurrenceService = require('./src/services/recurrence.service');

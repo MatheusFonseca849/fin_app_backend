@@ -147,6 +147,14 @@ userSchema.methods.toJSON = function () {
   delete obj.password;
   delete obj.failedLoginAttempts;
   delete obj.lockUntil;
+  delete obj.tokenVersion;
+  delete obj.__v;
+  delete obj.verificationToken;
+  delete obj.verificationTokenExpires;
+  delete obj.resetPasswordToken;
+  delete obj.resetPasswordExpires;
+  delete obj.pendingEmailToken;
+  delete obj.pendingEmailTokenExpires;
   return obj;
 };
 

@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const Transaction = require('../models/schemas/transaction.schema');
 const userService = require('./user.service');
+const { acquireLock } = require('../utils/lock.utils');
 
 class RecurrenceService {
 
@@ -8,10 +9,20 @@ class RecurrenceService {
     // Run every day at 00:05 (5 minutes past midnight)
     this.job = cron.schedule('5 0 * * *', async () => {
       console.log('🔄 [Recurrence] Running daily check...');
+
+      // Distributed lock: only one instance processes recurrences
+      const release = await acquireLock('lock:recurrence:daily', 120); // 2 min TTL
+      if (!release) {
+        console.log('⏭️ [Recurrence] Skipped — another instance holds the lock');
+        return;
+      }
+
       try {
         await this.processAllRecurrences();
       } catch (error) {
         console.error('❌ [Recurrence] Processing error:', error.message);
+      } finally {
+        await release();
       }
     });
 

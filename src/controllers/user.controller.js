@@ -2,10 +2,11 @@ const userService = require('../services/user.service');
 const emailService = require('../services/email.service');
 const createError = require('../middlewares/createError');
 const { hashPassword, comparePassword, validatePasswordStrength } = require('../utils/password.utils');
-const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt.utils');
+const { generateAccessToken, generateRefreshToken, verifyRefreshToken, generateFingerprint } = require('../utils/jwt.utils');
 const { generateVerificationToken, hashToken } = require('../utils/verification.utils');
 const { uploadAvatar } = require('../utils/upload.utils');
 const cacheService = require('../services/cache.service');
+const { auditLog, AUDIT_EVENTS } = require('../utils/auditLogger');
 
 // ============================================
 // PUBLIC ROUTES (No Auth Required)
@@ -211,6 +212,14 @@ const resetPassword = async (req, res) => {
       );
     }
 
+    // Validate password strength (defense-in-depth — validator also checks, but this guards direct calls)
+    const passwordValidation = validatePasswordStrength(password);
+    if (!passwordValidation.isValid) {
+      return res.status(400).json(
+        createError(400, passwordValidation.message)
+      );
+    }
+
     user.password = await hashPassword(password);
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
@@ -218,6 +227,7 @@ const resetPassword = async (req, res) => {
     user.lockUntil = null;
     await user.save();
 
+    auditLog(AUDIT_EVENTS.PASSWORD_RESET, { userId: user._id.toString(), email }, req);
     res.json({ message: 'Senha redefinida com sucesso. Você já pode fazer login.' });
   } catch (error) {
     console.error('Reset password error:', error);
@@ -257,10 +267,12 @@ const login = async (req, res) => {
 
       if (attempts >= MAX_FAILED_ATTEMPTS) {
         update.lockUntil = new Date(Date.now() + LOCK_DURATION_MS);
+        auditLog(AUDIT_EVENTS.ACCOUNT_LOCKED, { userId: user._id.toString(), email, attempts }, req);
       }
 
       await userService.updateUser(user._id, update);
 
+      auditLog(AUDIT_EVENTS.LOGIN_FAILED, { email, attempts }, req);
       return res.status(401).json(
         createError(401, 'Email ou senha incorretos')
       );
@@ -281,7 +293,8 @@ const login = async (req, res) => {
     // Generate tokens (include tokenVersion for revocation support)
     const tokenPayload = { id: user._id, email: user.email, role: user.role, tokenVersion: user.tokenVersion };
     const accessToken = generateAccessToken(tokenPayload);
-    const refreshToken = generateRefreshToken({ id: user._id, tokenVersion: user.tokenVersion });
+    const fingerprint = generateFingerprint(req.headers['user-agent']);
+    const refreshToken = generateRefreshToken({ id: user._id, tokenVersion: user.tokenVersion, fingerprint });
 
     // Set cookie
     res.cookie('refreshToken', refreshToken, {
@@ -291,12 +304,14 @@ const login = async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
 
-    // Return user without password
-    const { password: _, ...userWithoutPassword } = user.toObject();
+    // Return user without sensitive fields (toJSON strips password, lockout info, etc.)
+    const userData = user.toJSON();
+
+    auditLog(AUDIT_EVENTS.LOGIN_SUCCESS, { userId: user._id.toString(), email: user.email }, req);
 
     res.json({
       accessToken,
-      user: userWithoutPassword
+      user: userData
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -350,8 +365,10 @@ const setBalance = async (req, res) => {
     if (!Number.isInteger(balance)) {
       return res.status(400).json(createError(400, 'O saldo deve ser um número inteiro (em centavos)'));
     }
+    const previousBalance = (await userService.findById(req.user.id))?.balance;
     const user = await userService.setBalance(req.user.id, balance);
     await cacheService.invalidateUser(req.user.id);
+    auditLog(AUDIT_EVENTS.BALANCE_SET, { userId: req.user.id, previousBalance, newBalance: balance }, req);
     res.json({ balance: user.balance });
   } catch (error) {
     console.error('Set balance error:', error);
@@ -419,6 +436,12 @@ const updateUser = async (req, res) => {
     }
 
     if (password) {
+      // Defense-in-depth: validate strength even though validator middleware also checks
+      const pwValidation = validatePasswordStrength(password);
+      if (!pwValidation.isValid) {
+        return res.status(400).json(createError(400, pwValidation.message));
+      }
+
       // Verify current password before allowing change
       const user = await userService.findByEmail(req.user.email);
       if (!user) {
@@ -429,6 +452,11 @@ const updateUser = async (req, res) => {
         return res.status(401).json(createError(401, 'Senha atual incorreta'));
       }
       updates.password = await hashPassword(password);
+      auditLog(AUDIT_EVENTS.PASSWORD_CHANGED, { userId: req.user.id }, req);
+    }
+
+    if (emailChangeRequested) {
+      auditLog(AUDIT_EVENTS.EMAIL_CHANGE_REQUESTED, { userId: req.user.id, newEmail: email }, req);
     }
 
     const user = await userService.updateUser(req.user.id, updates);
@@ -494,6 +522,7 @@ const verifyEmailChange = async (req, res) => {
     await userService.incrementTokenVersion(user._id);
     await cacheService.invalidateUser(user._id.toString());
 
+    auditLog(AUDIT_EVENTS.EMAIL_CHANGE_CONFIRMED, { userId: user._id.toString(), newEmail: user.email }, req);
     res.json({ message: 'Email alterado com sucesso. Faça login novamente com o novo endereço.' });
   } catch (error) {
     console.error('Verify email change error:', error);
@@ -559,6 +588,7 @@ const deleteUser = async (req, res) => {
 
     await userService.deleteUser(req.user.id);
     await cacheService.invalidateUser(req.user.id);
+    auditLog(AUDIT_EVENTS.ACCOUNT_DELETED, { userId: req.user.id }, req);
     res.json({ message: 'Usuário excluído com sucesso' });
   } catch (error) {
     console.error('Delete user error:', error);
@@ -570,6 +600,7 @@ const logout = async (req, res) => {
   try {
     await userService.incrementTokenVersion(req.user.id);
     res.clearCookie('refreshToken');
+    auditLog(AUDIT_EVENTS.LOGOUT, { userId: req.user.id }, req);
     res.json({ message: 'Logout realizado com sucesso' });
   } catch (error) {
     console.error('Logout error:', error);
@@ -604,11 +635,22 @@ const refresh = async (req, res) => {
       );
     }
 
+    // Validate fingerprint — reject tokens from different user-agents
+    if (decoded.fingerprint) {
+      const currentFingerprint = generateFingerprint(req.headers['user-agent']);
+      if (currentFingerprint !== decoded.fingerprint) {
+        return res.status(401).json(
+          createError(401, 'Token inválido — dispositivo não reconhecido')
+        );
+      }
+    }
+
     const tokenPayload = { id: user._id, email: user.email, role: user.role, tokenVersion: user.tokenVersion };
     const accessToken = generateAccessToken(tokenPayload);
 
-    // Rotate refresh token — issue a new one on every refresh
-    const newRefreshToken = generateRefreshToken({ id: user._id, tokenVersion: user.tokenVersion });
+    // Rotate refresh token — issue a new one on every refresh (preserve fingerprint)
+    const fingerprint = generateFingerprint(req.headers['user-agent']);
+    const newRefreshToken = generateRefreshToken({ id: user._id, tokenVersion: user.tokenVersion, fingerprint });
     res.cookie('refreshToken', newRefreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
