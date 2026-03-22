@@ -544,9 +544,25 @@ const remove = async (req, res) => {
   }
 };
 
+const getDashboard = async (req, res) => {
+  try {
+    const cached = await cacheService.getCachedDashboard(req.user.id);
+    if (cached) return res.json(cached);
+
+    const data = await transactionService.getDashboardData(req.user.id);
+
+    await cacheService.cacheDashboard(req.user.id, data);
+    res.json(data);
+  } catch (error) {
+    console.error("Dashboard data error:", error);
+    res.status(500).json(createError(500, "Erro ao buscar dados do dashboard"));
+  }
+};
+
 module.exports = {
   getAll,
   getMonthlySummary,
+  getDashboard,
   create,
   getImportBanks,
   importPreview,

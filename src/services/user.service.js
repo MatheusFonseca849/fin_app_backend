@@ -68,7 +68,7 @@ class UserService {
   }
 
   async getAllUsers() {
-    return await User.find().select('-password');
+    return await User.find().select('-password').lean();
   }
 
   // ============================================
@@ -78,17 +78,18 @@ class UserService {
   async getAllUsersSafe() {
     return await User.find()
       .select('-password')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
   }
 
   async getUserSummary(userId) {
-    const user = await User.findById(userId).select('-password');
+    const user = await User.findById(userId).select('-password').lean();
     if (!user) throw new Error('Usuário não encontrado');
 
     const transactionCount = await transactionService.getTransactionCount(userId);
     const categoryCount = await categoryService.getCategoryCount(userId);
     
-    const summary = user.toObject();
+    const summary = { ...user };
     summary.stats = {
       transactionCount,
       categoryCount,

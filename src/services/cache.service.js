@@ -77,6 +77,7 @@ class CacheService {
     userCategories: (userId) => `user:${userId}:categories`,
     userTransactions: (userId, page = 1) => `user:${userId}:transactions:page:${page}`,
     userMonthlySummary: (userId) => `user:${userId}:transactions:monthly-summary`,
+    userDashboard: (userId) => `user:${userId}:dashboard`,
     allUserKeys: (userId) => `user:${userId}:*`
   };
 
@@ -114,6 +115,14 @@ class CacheService {
 
   async cacheMonthlySummary(userId, data) {
     await this.set(this.keys.userMonthlySummary(userId), data, 300); // 5 min
+  }
+
+  async getCachedDashboard(userId) {
+    return this.get(this.keys.userDashboard(userId));
+  }
+
+  async cacheDashboard(userId, data) {
+    await this.set(this.keys.userDashboard(userId), data, 300); // 5 min
   }
 
   async invalidateUser(userId) {
