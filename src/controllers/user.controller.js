@@ -586,6 +586,21 @@ const deleteUser = async (req, res) => {
       );
     }
 
+    const { password } = req.body;
+    if (!password) {
+      return res.status(400).json(createError(400, 'Senha é obrigatória para excluir a conta'));
+    }
+
+    const user = await userService.findByEmail(req.user.email);
+    if (!user) {
+      return res.status(404).json(createError(404, 'Usuário não encontrado'));
+    }
+
+    const isValid = await comparePassword(password, user.password);
+    if (!isValid) {
+      return res.status(401).json(createError(401, 'Senha incorreta'));
+    }
+
     await userService.deleteUser(req.user.id);
     await cacheService.invalidateUser(req.user.id);
     auditLog(AUDIT_EVENTS.ACCOUNT_DELETED, { userId: req.user.id }, req);

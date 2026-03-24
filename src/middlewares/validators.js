@@ -397,7 +397,8 @@ const bulkUpdateValidation = [
 
   body('updates.value')
     .optional()
-    .isFloat({ min: 0.01 }).withMessage('Valor deve ser um número positivo'),
+    .isFloat({ min: 0.01 }).withMessage('Valor deve ser um número positivo')
+    .customSanitizer(value => Math.round(value * 100)),
 
   body('updates.type')
     .optional()

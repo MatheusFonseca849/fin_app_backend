@@ -11,10 +11,10 @@ const redisClient = require('../config/redis');
 
 const getAll = async (req, res) => {
   try {
-    const { page, limit, type, isRecurrent, isPaid, startDate, endDate } = req.query;
+    const { page, limit, type, category, isRecurrent, isPaid, startDate, endDate } = req.query;
     const pageNum = page ? parseInt(page) : 1;
     const limitNum = limit ? parseInt(limit) : 50;
-    const hasFilters = type !== undefined || isRecurrent !== undefined || isPaid !== undefined || startDate || endDate || limitNum !== 50;
+    const hasFilters = type !== undefined || category !== undefined || isRecurrent !== undefined || isPaid !== undefined || startDate || endDate || limitNum !== 50;
 
     const cached = await cacheService.getCachedTransactions(req.user.id, pageNum);
     if (cached && !hasFilters) return res.json(cached);
@@ -23,6 +23,7 @@ const getAll = async (req, res) => {
       page: pageNum,
       limit: limitNum,
       type,
+      category,
       startDate,
       endDate
     };
