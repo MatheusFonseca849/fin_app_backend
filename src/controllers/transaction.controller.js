@@ -11,10 +11,10 @@ const redisClient = require('../config/redis');
 
 const getAll = async (req, res) => {
   try {
-    const { page, limit, type, isRecurrent, isPaid, startDate, endDate } = req.query;
+    const { page, limit, type, category, isRecurrent, isPaid, startDate, endDate } = req.query;
     const pageNum = page ? parseInt(page) : 1;
     const limitNum = limit ? parseInt(limit) : 50;
-    const hasFilters = type !== undefined || isRecurrent !== undefined || isPaid !== undefined || startDate || endDate || limitNum !== 50;
+    const hasFilters = type !== undefined || category !== undefined || isRecurrent !== undefined || isPaid !== undefined || startDate || endDate || limitNum !== 50;
 
     const cached = await cacheService.getCachedTransactions(req.user.id, pageNum);
     if (cached && !hasFilters) return res.json(cached);
@@ -23,6 +23,7 @@ const getAll = async (req, res) => {
       page: pageNum,
       limit: limitNum,
       type,
+      category,
       startDate,
       endDate
     };
@@ -191,6 +192,10 @@ const importConfirm = async (req, res) => {
       return res.status(400).json(createError(400, "Nenhuma transação para importar"));
     }
 
+    // Batch-load all user categories once (avoids N+1 queries in the loop)
+    const userCategories = await categoryService.getCategories(req.user.id);
+    const validCategoryIds = new Set(userCategories.map(c => c._id.toString()));
+
     // Validate and transform rows
     const docs = [];
     const validationErrors = [];
@@ -215,9 +220,8 @@ const importConfirm = async (req, res) => {
         continue;
       }
 
-      // Verify category belongs to user
-      const category = await categoryService.getCategoryById(req.user.id, tx.categoryId);
-      if (!category) {
+      // Verify category belongs to user (in-memory lookup)
+      if (!validCategoryIds.has(tx.categoryId)) {
         validationErrors.push(`${lineLabel}: categoria não encontrada`);
         continue;
       }

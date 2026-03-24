@@ -6,13 +6,14 @@ class TransactionService {
   // Transaction Operations
   // ============================================
 
-  async getTransactions(userId, { page = 1, limit = 50, type, isRecurrent, isPaid, startDate, endDate } = {}) {
+  async getTransactions(userId, { page = 1, limit = 50, type, category, isRecurrent, isPaid, startDate, endDate } = {}) {
     const MAX_LIMIT = 200;
     const safePage = Math.max(1, page);
     const safeLimit = Math.min(Math.max(1, limit), MAX_LIMIT);
 
     const filter = { userId };
     if (type) filter.type = type;
+    if (category) filter.category = category;
     if (isRecurrent !== undefined) filter.isRecurrent = isRecurrent;
     if (isPaid !== undefined) filter.isPaid = isPaid;
     if (startDate || endDate) {
