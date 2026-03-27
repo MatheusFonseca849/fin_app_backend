@@ -23,6 +23,7 @@
   "license": "ISC",
   "dependencies": {
     "bcryptjs": "^3.0.2",
+    "brapi": "^1.0.1",
     "cloudinary": "^2.9.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",

@@ -267,14 +267,6 @@ class TransactionService {
     };
   }
 
-  async getUserBalance(userId) {
-    const result = await Transaction.aggregate([
-      { $match: { userId: require('mongoose').Types.ObjectId.createFromHexString(userId), isRecurrent: false, isPaid: true } },
-      { $group: { _id: null, total: { $sum: '$value' } } }
-    ]);
-    return result[0]?.total || 0;
-  }
-
   async getSystemTransactionCount() {
     return await Transaction.countDocuments({ isRecurrent: false });
   }

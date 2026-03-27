@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const userController = require('../controllers/user.controller');
 const { authenticateToken } = require('../middlewares/auth.middleware');
-const { registerValidation, loginValidation, updateUserValidation, forgotPasswordValidation, resetPasswordValidation } = require('../middlewares/validators');
+const { registerValidation, loginValidation, updateUserValidation, forgotPasswordValidation, resetPasswordValidation, verifyEmailValidation, verifyEmailChangeValidation } = require('../middlewares/validators');
 const multer = require('multer');
 
 const avatarUpload = multer({
@@ -25,7 +25,7 @@ const avatarUpload = multer({
 router.post('/register', registerValidation, userController.register);
 
 /** POST /users/verify-email */
-router.post('/verify-email', userController.verifyEmail);
+router.post('/verify-email', verifyEmailValidation, userController.verifyEmail);
 
 /** POST /users/resend-verification */
 router.post('/resend-verification', userController.resendVerification);
@@ -43,7 +43,7 @@ router.post('/login', loginValidation, userController.login);
 router.post('/refresh', userController.refresh);
 
 /** POST /users/verify-email-change */
-router.post('/verify-email-change', userController.verifyEmailChange);
+router.post('/verify-email-change', verifyEmailChangeValidation, userController.verifyEmailChange);
 
 // ============================================
 // AUTHENTICATED ROUTES

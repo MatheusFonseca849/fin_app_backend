@@ -127,6 +127,7 @@ class CacheService {
 
   async invalidateUser(userId) {
     await this.invalidatePattern(this.keys.allUserKeys(userId));
+    await this.del(`auth:user:${userId}`);
   }
 
   async invalidateCategories(userId) {

@@ -4,10 +4,18 @@ const { hashPassword, comparePassword } = require('../utils/password.utils');
 
 const listUsers = async (req, res) => {
   try {
-    const users = await userService.getAllUsersSafe();
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+
+    const { users, total, page: safePage, limit: safeLimit } = await userService.getAllUsersSafe({ page, limit });
     res.json({
-      count: users.length,
-      users
+      data: users,
+      pagination: {
+        page: safePage,
+        limit: safeLimit,
+        total,
+        pages: Math.ceil(total / safeLimit) || 1
+      }
     });
   } catch (error) {
     console.error('Admin list users error:', error);
