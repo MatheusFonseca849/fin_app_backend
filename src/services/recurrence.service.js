@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const Transaction = require('../models/schemas/transaction.schema');
 const userService = require('./user.service');
+const cacheService = require('./cache.service');
 const { acquireLock } = require('../utils/lock.utils');
 
 class RecurrenceService {
@@ -111,6 +112,17 @@ class RecurrenceService {
         await userService.adjustBalance(uid, delta);
       } catch (error) {
         console.error(`❌ [Recurrence] Failed to adjust balance for user ${uid}:`, error.message);
+      }
+    }
+
+    // 4. Invalidate caches for all affected users
+    const affectedUserIds = [...new Set(recurrents.map(r => r.userId.toString()))];
+    for (const uid of affectedUserIds) {
+      try {
+        await cacheService.invalidateTransactions(uid);
+        await cacheService.invalidateUser(uid);
+      } catch (error) {
+        console.error(`❌ [Recurrence] Failed to invalidate cache for user ${uid}:`, error.message);
       }
     }
 

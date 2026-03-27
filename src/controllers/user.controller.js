@@ -126,15 +126,9 @@ const resendVerification = async (req, res) => {
     }
 
     const user = await userService.findByEmail(email);
-    if (!user) {
-      // Don't reveal if user exists
+    if (!user || user.isVerified) {
+      // Don't reveal whether the email exists or its verification status
       return res.json({ message: 'Se o email estiver cadastrado, um novo link de verificação será enviado.' });
-    }
-
-    if (user.isVerified) {
-      return res.status(400).json(
-        createError(400, 'Email já verificado')
-      );
     }
 
     // Generate new token
@@ -345,6 +339,11 @@ const getMe = async (req, res) => {
 
 const getBalance = async (req, res) => {
   try {
+    const cached = await cacheService.getCachedUserProfile(req.user.id);
+    if (cached && cached.balance !== undefined) {
+      return res.json({ balance: cached.balance });
+    }
+
     const user = await userService.findById(req.user.id);
     if (!user) {
       return res.status(404).json(createError(404, 'Usuário não encontrado'));
@@ -614,6 +613,7 @@ const deleteUser = async (req, res) => {
 const logout = async (req, res) => {
   try {
     await userService.incrementTokenVersion(req.user.id);
+    await cacheService.invalidateUser(req.user.id);
     res.clearCookie('refreshToken');
     auditLog(AUDIT_EVENTS.LOGOUT, { userId: req.user.id }, req);
     res.json({ message: 'Logout realizado com sucesso' });

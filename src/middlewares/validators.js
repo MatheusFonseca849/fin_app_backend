@@ -288,6 +288,32 @@ const resetPasswordValidation = [
   handleValidationErrors
 ];
 
+// ============ EMAIL VERIFICATION VALIDATIONS ============
+
+const verifyEmailValidation = [
+  body('token')
+    .trim()
+    .notEmpty().withMessage('Token é obrigatório'),
+  
+  body('email')
+    .isEmail().withMessage('Formato de email inválido')
+    .normalizeEmail({ gmail_remove_dots: false }),
+  
+  handleValidationErrors
+];
+
+const verifyEmailChangeValidation = [
+  body('token')
+    .trim()
+    .notEmpty().withMessage('Token é obrigatório'),
+  
+  body('email')
+    .isEmail().withMessage('Formato de email inválido')
+    .normalizeEmail({ gmail_remove_dots: false }),
+  
+  handleValidationErrors
+];
+
 // ============ CATEGORY VALIDATIONS ============
 
 const createCategoryValidation = [
@@ -472,5 +498,7 @@ module.exports = {
   adminUpdateUserValidation,
   bulkDeleteValidation,
   bulkUpdateValidation,
-  importConfirmValidation
+  importConfirmValidation,
+  verifyEmailValidation,
+  verifyEmailChangeValidation
 };

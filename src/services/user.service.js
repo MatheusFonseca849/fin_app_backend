@@ -75,11 +75,18 @@ class UserService {
   // Admin Operations
   // ============================================
 
-  async getAllUsersSafe() {
-    return await User.find()
-      .select('-password')
-      .sort({ createdAt: -1 })
-      .lean();
+  async getAllUsersSafe({ page = 1, limit = 20 } = {}) {
+    const skip = (page - 1) * limit;
+    const [users, total] = await Promise.all([
+      User.find()
+        .select('-password')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      User.countDocuments()
+    ]);
+    return { users, total, page, limit };
   }
 
   async getUserSummary(userId) {
