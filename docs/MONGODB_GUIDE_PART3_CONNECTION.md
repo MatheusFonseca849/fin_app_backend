@@ -142,6 +142,18 @@ async function startServer() {
       console.log('📊 MongoDB status:', database.getStatus());
     });
     
+    // 3. Add health check route
+    app.get('/health', (req, res) => {
+      const dbStatus = database.getStatus();
+      res.json({
+        status: 'OK',
+        database: {
+          connected: dbStatus.isConnected,
+          name: dbStatus.name
+        },
+        timestamp: new Date().toISOString()
+      });
+    });
   } catch (error) {
     console.error('❌ Failed to start server:', error);
     process.exit(1);

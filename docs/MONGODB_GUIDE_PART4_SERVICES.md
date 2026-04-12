@@ -216,7 +216,7 @@ async function seedDatabase() {
     
     const user = new User({
       name: 'Matheus Fonseca',
-      email: 'matheusfonseca@gmail.com',
+      email: 'matheus@mail.com',
       password: hashedPassword,
       balance: 0,
       categories: User.getDefaultCategories(),

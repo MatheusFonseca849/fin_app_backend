@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 
 const hashPassword = async (password) => {
-    const saltRounds = 10
+    const saltRounds = 12
     return await bcrypt.hash(password, saltRounds)
 }
 
@@ -10,10 +10,10 @@ const comparePassword = async (password, hashedPassword) => {
 };
 
 const validatePasswordStrength = (password) => {
-    if (!password || password.length < 6) {
+    if (!password || password.length < 8) {
         return { 
-            valid: false, 
-            message: 'Senha deve ter no mínimo 6 caracteres' 
+            isValid: false, 
+            message: 'Senha deve ter no mínimo 8 caracteres' 
         };
     }
     
@@ -28,30 +28,30 @@ const validatePasswordStrength = (password) => {
     
     if(!hasUpperCase){
         return { 
-            valid: false, 
+            isValid: false, 
             message: 'Senha deve conter pelo menos uma letra maiúscula' 
         };
     }
     if(!hasLowerCase){
         return { 
-            valid: false, 
+            isValid: false, 
             message: 'Senha deve conter pelo menos uma letra minúscula' 
         };
     }
     if(!hasNumber){
         return { 
-            valid: false, 
+            isValid: false, 
             message: 'Senha deve conter pelo menos um número' 
         };
     }
     if(!hasSpecialChar){
         return { 
-            valid: false, 
+            isValid: false, 
             message: 'Senha deve conter pelo menos um caractere especial' 
         };
     }
     
-    return { valid: true, message: 'Senha válida' };
+    return { isValid: true, message: 'Password is valid' };
 };
 
 module.exports = {
