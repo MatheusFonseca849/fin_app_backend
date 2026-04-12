@@ -63,6 +63,7 @@ describe('Transaction Endpoints', () => {
           type: 'debito',
           category: debitCategory._id.toString(),
           isPaid: true,
+          date: new Date().toISOString(),
         });
 
       expect(res.status).toBe(201);
@@ -83,6 +84,7 @@ describe('Transaction Endpoints', () => {
           type: 'credito',
           category: creditCategory._id.toString(),
           isPaid: true,
+          date: new Date().toISOString(),
         });
 
       const updated = await User.findById(authUser._id);
@@ -162,6 +164,7 @@ describe('Transaction Endpoints', () => {
           type: 'credito',
           category: creditCategory._id.toString(),
           isPaid: false, // should be overridden to true
+          date: new Date().toISOString(),
         });
 
       expect(res.status).toBe(201);
@@ -270,7 +273,7 @@ describe('Transaction Endpoints', () => {
       expect(updated.balance).toBe(-5000);
     });
 
-    it('should return error for non-existent transaction', async () => {
+    it('should return 404 for non-existent transaction', async () => {
       const fakeId = randomObjectId();
       const res = await request(app)
         .put(`/api/v1/records/${fakeId}`)
@@ -278,8 +281,7 @@ describe('Transaction Endpoints', () => {
         .set('Origin', ORIGIN)
         .send({ description: 'Ghost' });
 
-      // Service throws, controller returns 500 with error message
-      expect([404, 500]).toContain(res.status);
+      expect(res.status).toBe(404);
     });
   });
 
@@ -335,15 +337,14 @@ describe('Transaction Endpoints', () => {
       expect(updated.balance).toBe(5000); // unchanged
     });
 
-    it('should return error for non-existent transaction', async () => {
+    it('should return 404 for non-existent transaction', async () => {
       const fakeId = randomObjectId();
       const res = await request(app)
         .delete(`/api/v1/records/${fakeId}`)
         .set('Authorization', `Bearer ${token}`)
         .set('Origin', ORIGIN);
 
-      // Service throws, controller returns 500 with error message
-      expect([404, 500]).toContain(res.status);
+      expect(res.status).toBe(404);
     });
   });
 
@@ -730,6 +731,78 @@ describe('Transaction Endpoints', () => {
 
       expect(res.status).toBe(201);
       expect(res.body.skippedCount).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // ============================================
+  // GET /records/calendar
+  // ============================================
+  describe('GET /api/v1/records/calendar', () => {
+    it('should return calendar transactions for a valid date range', async () => {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const lastDay = new Date(y, now.getMonth() + 1, 0).getDate();
+      const startDate = `${y}-${m}-01`;
+      const endDate = `${y}-${m}-${String(lastDay).padStart(2, '0')}`;
+
+      await Transaction.create({
+        userId: authUser._id,
+        description: 'Calendar tx',
+        value: 3000,
+        type: 'debito',
+        category: debitCategory._id,
+        isPaid: true,
+        timestamp: now,
+      });
+
+      const res = await request(app)
+        .get(`/api/v1/records/calendar?startDate=${startDate}&endDate=${endDate}`)
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data).toBeDefined();
+      expect(res.body.data.length).toBe(1);
+      expect(res.body.data[0].description).toBe('Calendar tx');
+    });
+
+    it('should reject request without startDate or endDate', async () => {
+      const res = await request(app)
+        .get('/api/v1/records/calendar?startDate=2025-01-01')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should reject invalid date strings', async () => {
+      const res = await request(app)
+        .get('/api/v1/records/calendar?startDate=not-a-date&endDate=also-bad')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should reject date range exceeding 93 days', async () => {
+      const res = await request(app)
+        .get('/api/v1/records/calendar?startDate=2025-01-01&endDate=2025-12-31')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should reject reversed date range (end before start)', async () => {
+      const res = await request(app)
+        .get('/api/v1/records/calendar?startDate=2025-06-01&endDate=2025-01-01')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should reject unauthenticated request', async () => {
+      const res = await request(app)
+        .get('/api/v1/records/calendar?startDate=2025-01-01&endDate=2025-01-31');
+
+      expect(res.status).toBe(401);
     });
   });
 

@@ -21,6 +21,9 @@ const upload = multer({
 /** GET /records */
 router.get("/", authenticateToken, transactionController.getAll);
 
+/** GET /records/calendar */
+router.get("/calendar", authenticateToken, transactionController.getCalendar);
+
 /** GET /records/monthly-summary */
 router.get("/monthly-summary", authenticateToken, transactionController.getMonthlySummary);
 

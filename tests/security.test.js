@@ -261,6 +261,64 @@ describe('Security & Middleware', () => {
       const res = await request(app).get('/health');
       expect(res.status).toBe(200);
     });
+
+    it('should omit request body from logs in production', () => {
+      const requestLogger = require('../src/middlewares/requestLogger');
+      const originalEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+      const req = {
+        method: 'POST',
+        path: '/api/v1/test',
+        params: {},
+        query: {},
+        body: { password: 'secret123', description: 'test' },
+      };
+      const res = {};
+      const next = jest.fn();
+
+      requestLogger(req, res, next);
+
+      expect(next).toHaveBeenCalled();
+      const loggedArgs = logSpy.mock.calls[0];
+      const loggedData = loggedArgs[1];
+      expect(loggedData).not.toHaveProperty('body');
+
+      logSpy.mockRestore();
+      process.env.NODE_ENV = originalEnv;
+    });
+
+    it('should include sanitized body in logs in development', () => {
+      const requestLogger = require('../src/middlewares/requestLogger');
+      const originalEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'development';
+
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+      const req = {
+        method: 'POST',
+        path: '/api/v1/test',
+        params: {},
+        query: {},
+        body: { password: 'secret123', description: 'test' },
+      };
+      const res = {};
+      const next = jest.fn();
+
+      requestLogger(req, res, next);
+
+      expect(next).toHaveBeenCalled();
+      const loggedArgs = logSpy.mock.calls[0];
+      const loggedData = loggedArgs[1];
+      expect(loggedData).toHaveProperty('body');
+      expect(loggedData.body.password).toBe('[REDACTED]');
+      expect(loggedData.body.description).toBe('test');
+
+      logSpy.mockRestore();
+      process.env.NODE_ENV = originalEnv;
+    });
   });
 
   // ============================================

@@ -10,4 +10,12 @@ const hashToken = (rawToken) => {
   return crypto.createHash('sha256').update(rawToken).digest('hex');
 };
 
-module.exports = { generateVerificationToken, hashToken };
+const safeEqual = (a, b) => {
+  if (!a || !b) return false;
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+};
+
+module.exports = { generateVerificationToken, hashToken, safeEqual };

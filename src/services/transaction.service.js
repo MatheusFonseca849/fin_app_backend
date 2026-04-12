@@ -1,4 +1,6 @@
 const Transaction = require('../models/schemas/transaction.schema');
+const mongoose = require('mongoose');
+const AppError = require('../utils/AppError');
 
 class TransactionService {
 
@@ -18,8 +20,8 @@ class TransactionService {
     if (isPaid !== undefined) filter.isPaid = isPaid;
     if (startDate || endDate) {
       filter.timestamp = {};
-      if (startDate) filter.timestamp.$gte = new Date(startDate);
-      if (endDate) filter.timestamp.$lte = new Date(endDate);
+      if (startDate) filter.timestamp.$gte = startDate;
+      if (endDate) filter.timestamp.$lte = endDate;
     }
 
     const [data, total] = await Promise.all([
@@ -35,6 +37,21 @@ class TransactionService {
     return { data, total, page: safePage, limit: safeLimit };
   }
 
+  async getCalendarTransactions(userId, startDate, endDate) {
+    const filter = { userId };
+    if (startDate || endDate) {
+      filter.timestamp = {};
+      if (startDate) filter.timestamp.$gte = startDate;
+      if (endDate) filter.timestamp.$lte = endDate;
+    }
+
+    return await Transaction.find(filter)
+      .populate('category')
+      .sort({ timestamp: -1 })
+      .limit(5000)
+      .lean();
+  }
+
   async getTransactionCount(userId) {
     return await Transaction.countDocuments({ userId });
   }
@@ -43,34 +60,34 @@ class TransactionService {
     return await Transaction.findOne({ _id: transactionId, userId }).populate('category').lean();
   }
 
-  async addTransaction(userId, transactionData) {
+  async addTransaction(userId, transactionData, { session } = {}) {
     const transaction = new Transaction({
       ...transactionData,
       userId
     });
-    const saved = await transaction.save();
+    const saved = await transaction.save({ session });
     return await saved.populate('category');
   }
 
-  async updateTransaction(userId, transactionId, updates) {
-    const oldTransaction = await Transaction.findOne({ _id: transactionId, userId });
-    if (!oldTransaction) throw new Error('Transação não encontrada');
+  async updateTransaction(userId, transactionId, updates, { session } = {}) {
+    const oldTransaction = await Transaction.findOne({ _id: transactionId, userId }).session(session);
+    if (!oldTransaction) throw new AppError(404, 'Transação não encontrada');
 
     const newTransaction = await Transaction.findOneAndUpdate(
       { _id: transactionId, userId },
       updates,
-      { new: true, runValidators: true }
+      { new: true, runValidators: true, session }
     ).populate('category');
     return { oldTransaction, newTransaction };
   }
 
-  async deleteTransaction(userId, transactionId) {
-    const transaction = await Transaction.findOneAndDelete({ _id: transactionId, userId }).populate('category');
-    if (!transaction) throw new Error('Transação não encontrada');
+  async deleteTransaction(userId, transactionId, { session } = {}) {
+    const transaction = await Transaction.findOneAndDelete({ _id: transactionId, userId }, { session }).populate('category');
+    if (!transaction) throw new AppError(404, 'Transação não encontrada');
     return transaction;
   }
 
-  async bulkAddTransactions(userId, transactions) {
+  async bulkAddTransactions(userId, transactions, { session } = {}) {
     // Build date range from incoming transactions for scoped query
     const timestamps = transactions.map(tx => tx.timestamp);
     const minDate = new Date(Math.min(...timestamps.map(d => d.getTime())));
@@ -79,10 +96,12 @@ class TransactionService {
     maxDate.setHours(23, 59, 59, 999);
 
     // Fetch existing transactions within the date range
-    const existing = await Transaction.find({
+    const existingQuery = Transaction.find({
       userId,
       timestamp: { $gte: minDate, $lte: maxDate }
-    }).lean();
+    });
+    if (session) existingQuery.session(session);
+    const existing = await existingQuery.lean();
 
     // Build a Set of fingerprints for fast lookup
     const fingerprint = (tx) => {
@@ -115,6 +134,19 @@ class TransactionService {
 
     const docs = newTransactions.map(txData => ({ ...txData, userId }));
 
+    // Inside a transaction all writes are atomic — use ordered:true (default).
+    // Without a session, ordered:false allows partial inserts to succeed.
+    if (session) {
+      const result = await Transaction.insertMany(docs, { session });
+      return {
+        createdCount: result.length,
+        insertedDocs: result,
+        skippedCount,
+        errorCount: 0,
+        errors: []
+      };
+    }
+
     try {
       const result = await Transaction.insertMany(docs, { ordered: false });
       return {
@@ -146,7 +178,7 @@ class TransactionService {
   // ============================================
 
   async getMonthlyAggregation(userId, { months } = {}) {
-    const mongoose = require('mongoose');
+    
     const match = {
       userId: mongoose.Types.ObjectId.createFromHexString(userId),
       isRecurrent: false,
@@ -186,14 +218,12 @@ class TransactionService {
    * Single aggregation + one query — replaces the need for the frontend to fetch ALL transactions.
    */
   async getDashboardData(userId) {
-    const mongoose = require('mongoose');
     const objectId = mongoose.Types.ObjectId.createFromHexString(userId);
 
     const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
     const [categoryBreakdown, upcomingExpenses] = await Promise.all([
       // Current month paid transactions grouped by category
@@ -271,39 +301,40 @@ class TransactionService {
     return await Transaction.countDocuments({ isRecurrent: false });
   }
 
-  async deleteAllUserTransactions(userId) {
-    return await Transaction.deleteMany({ userId });
+  async deleteAllUserTransactions(userId, { session } = {}) {
+    return await Transaction.deleteMany({ userId }, { session });
   }
 
-  async reassignCategory(userId, oldCategoryId, newCategoryId) {
+  async reassignCategory(userId, oldCategoryId, newCategoryId, { session } = {}) {
     return await Transaction.updateMany(
       { userId, category: oldCategoryId },
-      { $set: { category: newCategoryId } }
+      { $set: { category: newCategoryId } },
+      { session }
     );
   }
 
-  async bulkDeleteTransactions(userId, ids) {
-    const toDelete = await Transaction.find({ _id: { $in: ids }, userId });
+  async bulkDeleteTransactions(userId, ids, { session } = {}) {
+    const toDelete = await Transaction.find({ _id: { $in: ids }, userId }).session(session);
     if (toDelete.length === 0) return { deletedCount: 0, deletedTransactions: [] };
 
     const deleteIds = toDelete.map(tx => tx._id);
-    await Transaction.deleteMany({ _id: { $in: deleteIds } });
+    await Transaction.deleteMany({ _id: { $in: deleteIds }, userId }, { session });
 
     return { deletedCount: toDelete.length, deletedTransactions: toDelete };
   }
 
-  async bulkUpdateTransactions(userId, ids, updates) {
-    const toUpdate = await Transaction.find({ _id: { $in: ids }, userId });
+  async bulkUpdateTransactions(userId, ids, updates, { session } = {}) {
+    const toUpdate = await Transaction.find({ _id: { $in: ids }, userId }).session(session);
     if (toUpdate.length === 0) return { updatedCount: 0, oldTransactions: [], newTransactions: [] };
 
     const updateIds = toUpdate.map(tx => tx._id);
     await Transaction.updateMany(
-      { _id: { $in: updateIds } },
+      { _id: { $in: updateIds }, userId },
       { $set: updates },
-      { runValidators: true }
+      { runValidators: true, session }
     );
 
-    const newTransactions = await Transaction.find({ _id: { $in: updateIds } }).populate('category');
+    const newTransactions = await Transaction.find({ _id: { $in: updateIds } }).session(session).populate('category');
     return { updatedCount: newTransactions.length, oldTransactions: toUpdate, newTransactions };
   }
 }

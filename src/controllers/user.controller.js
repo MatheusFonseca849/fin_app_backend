@@ -3,10 +3,11 @@ const emailService = require('../services/email.service');
 const createError = require('../middlewares/createError');
 const { hashPassword, comparePassword, validatePasswordStrength } = require('../utils/password.utils');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken, generateFingerprint } = require('../utils/jwt.utils');
-const { generateVerificationToken, hashToken } = require('../utils/verification.utils');
+const { generateVerificationToken, hashToken, safeEqual } = require('../utils/verification.utils');
 const { uploadAvatar } = require('../utils/upload.utils');
 const cacheService = require('../services/cache.service');
 const { auditLog, AUDIT_EVENTS } = require('../utils/auditLogger');
+const AppError = require('../utils/AppError');
 
 // ============================================
 // PUBLIC ROUTES (No Auth Required)
@@ -16,7 +17,7 @@ const register = async (req, res) => {
   try {
     const { firstName, lastName, email, password } = req.body;
 
-    // Validate password strength
+    // Validate password strength for defense-in-depth purposes
     const passwordValidation = validatePasswordStrength(password);
     if (!passwordValidation.isValid) {
       return res.status(400).json(
@@ -90,17 +91,18 @@ const verifyEmail = async (req, res) => {
       );
     }
 
-    if (user.verificationToken !== hashedToken) {
-      return res.status(400).json(
-        createError(400, 'Token de verificação inválido')
-      );
-    }
-
     if (user.verificationTokenExpires < new Date()) {
       return res.status(400).json(
         createError(400, 'Token de verificação expirado. Solicite um novo.')
       );
     }
+    
+    if (!safeEqual(user.verificationToken, hashedToken)) {
+      return res.status(400).json(
+        createError(400, 'Token de verificação inválido')
+      );
+    }
+
 
     // Mark user as verified
     user.isVerified = true;
@@ -192,17 +194,17 @@ const resetPassword = async (req, res) => {
       );
     }
 
-    const hashedToken = hashToken(token);
-    if (user.resetPasswordToken !== hashedToken) {
-      return res.status(400).json(
-        createError(400, 'Token inválido ou expirado')
-      );
-    }
-
-    // Check expiry
+    // Check expiry before token to avoid timing oracle
     if (user.resetPasswordExpires < new Date()) {
       return res.status(400).json(
         createError(400, 'Token expirado. Solicite um novo link de redefinição.')
+      );
+    }
+
+    const hashedToken = hashToken(token);
+    if (!safeEqual(user.resetPasswordToken, hashedToken)) {
+      return res.status(400).json(
+        createError(400, 'Token inválido ou expirado')
       );
     }
 
@@ -252,6 +254,13 @@ const login = async (req, res) => {
       );
     }
 
+    // Check if email is verified before running expensive bcrypt
+    if (!user.isVerified) {
+      return res.status(403).json(
+        createError(403, 'Email não verificado. Verifique sua caixa de entrada ou solicite um novo link.')
+      );
+    }
+
     // Check password
     const isValid = await comparePassword(password, user.password);
     if (!isValid) {
@@ -269,13 +278,6 @@ const login = async (req, res) => {
       auditLog(AUDIT_EVENTS.LOGIN_FAILED, { email, attempts }, req);
       return res.status(401).json(
         createError(401, 'Email ou senha incorretos')
-      );
-    }
-
-    // Check if email is verified
-    if (!user.isVerified) {
-      return res.status(403).json(
-        createError(403, 'Email não verificado. Verifique sua caixa de entrada ou solicite um novo link.')
       );
     }
 
@@ -389,8 +391,11 @@ const updateAvatar = async (req, res) => {
     await cacheService.invalidateUser(req.user.id);
     res.json({ avatarUrl: user.avatarUrl });
   } catch (error) {
+    if (error instanceof AppError) {
+      return res.status(error.statusCode).json(createError(error.statusCode, error.message));
+    }
     console.error('Avatar upload error:', error);
-    res.status(500).json(createError(500, error.message || 'Erro ao atualizar avatar'));
+    res.status(500).json(createError(500, 'Erro ao atualizar avatar'));
   }
 };
 
@@ -489,16 +494,17 @@ const verifyEmailChange = async (req, res) => {
       );
     }
 
-    const hashedToken = hashToken(token);
-    if (user.pendingEmailToken !== hashedToken) {
-      return res.status(400).json(
-        createError(400, 'Token de verificação inválido')
-      );
-    }
-
+    // Check expiry before token to avoid timing oracle
     if (user.pendingEmailTokenExpires < new Date()) {
       return res.status(400).json(
         createError(400, 'Token de verificação expirado. Solicite uma nova alteração.')
+      );
+    }
+
+    const hashedToken = hashToken(token);
+    if (!safeEqual(user.pendingEmailToken, hashedToken)) {
+      return res.status(400).json(
+        createError(400, 'Token de verificação inválido')
       );
     }
 
@@ -605,6 +611,9 @@ const deleteUser = async (req, res) => {
     auditLog(AUDIT_EVENTS.ACCOUNT_DELETED, { userId: req.user.id }, req);
     res.json({ message: 'Usuário excluído com sucesso' });
   } catch (error) {
+    if (error instanceof AppError) {
+      return res.status(error.statusCode).json(createError(error.statusCode, error.message));
+    }
     console.error('Delete user error:', error);
     res.status(500).json(createError(500, 'Erro ao excluir usuário'));
   }

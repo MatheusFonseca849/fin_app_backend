@@ -10,6 +10,9 @@ const recurrenceService = require('./src/services/recurrence.service');
 const redisClient = require('./src/config/redis');
 
 const PORT = process.env.PORT || 3000;
+const SHUTDOWN_TIMEOUT_MS = 10_000;
+
+let server;
 
 async function startServer() {
   try {
@@ -20,7 +23,7 @@ async function startServer() {
     redisClient.connect();
     
     // 3. Then start HTTP server
-    app.listen(PORT, () => {
+    server = app.listen(PORT, () => {
       console.log('🚀 Server running on http://localhost:' + PORT);
       console.log('📊 MongoDB status:', database.getStatus());
     });
@@ -33,5 +36,53 @@ async function startServer() {
     process.exit(1);
   }
 }
+
+// ============================================
+// Graceful Shutdown
+// ============================================
+
+let isShuttingDown = false;
+
+async function gracefulShutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  console.log(`\n⏳ ${signal} received — starting graceful shutdown...`);
+
+  // Force exit if shutdown takes too long
+  const forceTimer = setTimeout(() => {
+    console.error('❌ Shutdown timed out — forcing exit');
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+  forceTimer.unref();
+
+  try {
+    // 1. Stop accepting new connections, let in-flight requests finish
+    if (server) {
+      await new Promise((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      });
+      console.log('✅ HTTP server closed');
+    }
+
+    // 2. Stop recurrence scheduler
+    recurrenceService.stop();
+
+    // 3. Disconnect Redis
+    await redisClient.disconnect();
+
+    // 4. Disconnect MongoDB
+    await database.disconnect();
+
+    console.log('👋 Graceful shutdown complete');
+    process.exit(0);
+  } catch (error) {
+    console.error('❌ Error during shutdown:', error);
+    process.exit(1);
+  }
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 startServer();

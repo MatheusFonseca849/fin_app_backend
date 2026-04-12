@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const userController = require('../controllers/user.controller');
 const { authenticateToken } = require('../middlewares/auth.middleware');
-const { registerValidation, loginValidation, updateUserValidation, forgotPasswordValidation, resetPasswordValidation, verifyEmailValidation, verifyEmailChangeValidation } = require('../middlewares/validators');
+const { registerValidation, loginValidation, updateUserValidation, forgotPasswordValidation, resetPasswordValidation, verifyEmailValidation, verifyEmailChangeValidation, setBalanceValidation } = require('../middlewares/validators');
 const multer = require('multer');
 
 const avatarUpload = multer({
@@ -28,7 +28,7 @@ router.post('/register', registerValidation, userController.register);
 router.post('/verify-email', verifyEmailValidation, userController.verifyEmail);
 
 /** POST /users/resend-verification */
-router.post('/resend-verification', userController.resendVerification);
+router.post('/resend-verification', forgotPasswordValidation, userController.resendVerification);
 
 /** POST /users/forgot-password */
 router.post('/forgot-password', forgotPasswordValidation, userController.forgotPassword);
@@ -56,7 +56,7 @@ router.get('/me', authenticateToken, userController.getMe);
 router.get('/balance', authenticateToken, userController.getBalance);
 
 /** PUT /users/balance */
-router.put('/balance', authenticateToken, userController.setBalance);
+router.put('/balance', authenticateToken, setBalanceValidation, userController.setBalance);
 
 /** PUT /users/avatar */
 router.put('/avatar', authenticateToken, avatarUpload.single('avatar'), userController.updateAvatar);

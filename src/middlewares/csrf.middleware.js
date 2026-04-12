@@ -14,14 +14,16 @@ const csrfProtection = (req, res, next) => {
   const safeMethods = ['GET', 'HEAD', 'OPTIONS'];
   if (safeMethods.includes(req.method)) return next();
 
-  const allowedOrigin = (process.env.CLIENT_URL || 'http://localhost:3001').replace(/\/+$/, '');
+  const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:3001')
+    .split(',')
+    .map(o => o.trim().replace(/\/+$/, ''));
 
   // Prefer Origin header; fall back to Referer
   const origin = req.headers.origin;
   const referer = req.headers.referer;
 
   if (origin) {
-    if (origin.replace(/\/+$/, '') === allowedOrigin) return next();
+    if (allowedOrigins.includes(origin.replace(/\/+$/, ''))) return next();
     console.warn(`[CSRF] Blocked request from origin: ${origin}`);
     return res.status(403).json(createError(403, 'Origem não permitida'));
   }
@@ -29,7 +31,7 @@ const csrfProtection = (req, res, next) => {
   if (referer) {
     try {
       const refererOrigin = new URL(referer).origin;
-      if (refererOrigin === allowedOrigin) return next();
+      if (allowedOrigins.includes(refererOrigin)) return next();
     } catch {
       // malformed Referer — fall through to rejection
     }

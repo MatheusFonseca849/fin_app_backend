@@ -126,7 +126,7 @@ describe('Category Endpoints', () => {
         .set('Origin', ORIGIN)
         .send({ name: 'UniqueTest', type: 'debito', color: '#111111' });
 
-      expect([400, 409]).toContain(res.status);
+      expect(res.status).toBe(409);
     });
 
     it('should reject invalid color format', async () => {
@@ -188,7 +188,7 @@ describe('Category Endpoints', () => {
       expect(res.status).toBe(400);
     });
 
-    it('should return 400 for non-existent category', async () => {
+    it('should return 404 for non-existent category', async () => {
       const fakeId = randomObjectId();
       const res = await request(app)
         .put(`/api/v1/categories/${fakeId}`)
@@ -196,8 +196,7 @@ describe('Category Endpoints', () => {
         .set('Origin', ORIGIN)
         .send({ name: 'Ghost' });
 
-      // Controller catches service 'not found' error and returns 400
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(404);
     });
   });
 
@@ -230,15 +229,14 @@ describe('Category Endpoints', () => {
       expect(res.status).toBe(400);
     });
 
-    it('should return 400 for non-existent category', async () => {
+    it('should return 404 for non-existent category', async () => {
       const fakeId = randomObjectId();
       const res = await request(app)
         .delete(`/api/v1/categories/${fakeId}`)
         .set('Authorization', `Bearer ${token}`)
         .set('Origin', ORIGIN);
 
-      // Controller catches service 'not found' error and returns 400
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(404);
     });
   });
 });

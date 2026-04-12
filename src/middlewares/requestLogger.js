@@ -13,11 +13,16 @@ const sanitizeObject = (obj) => {
 };
 
 const requestLogger = (req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`, {
+    const logData = {
         params: req.params,
         query: sanitizeObject(req.query),
-        body: sanitizeObject(req.body)
-    });
+    };
+
+    if (process.env.NODE_ENV !== 'production') {
+        logData.body = sanitizeObject(req.body);
+    }
+
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`, logData);
     next();
 };
 

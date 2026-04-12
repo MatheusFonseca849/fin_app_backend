@@ -1,6 +1,9 @@
 const { parse } = require('csv-parse/sync');
 const { BANK_MAPPINGS } = require('../config/bankMappings');
 const Category = require('../models/schemas/category.schema');
+const AppError = require('../utils/AppError');
+
+const MAX_PREVIEW_ROWS = 5000;
 
 class CsvImportService {
 
@@ -214,7 +217,7 @@ class CsvImportService {
     if (bankKey === 'custom') {
       if (!customMapping || !customMapping.columns || !customMapping.columns.date ||
           !customMapping.columns.value || !customMapping.columns.description) {
-        throw new Error('Mapeamento customizado incompleto: date, value e description são obrigatórios');
+        throw new AppError(400, 'Mapeamento customizado incompleto: date, value e description são obrigatórios');
       }
       mapping = {
         columns: customMapping.columns,
@@ -226,23 +229,29 @@ class CsvImportService {
     } else {
       mapping = BANK_MAPPINGS[bankKey];
       if (!mapping) {
-        throw new Error(`Banco "${bankKey}" não suportado`);
+        throw new AppError(400, `Banco "${bankKey}" não suportado`);
       }
     }
 
     const separator = mapping.separator || ',';
-    const headers = this.getCSVHeaders(fileBuffer, separator);
     const records = this.parseCSV(fileBuffer, separator);
 
     if (!records || records.length === 0) {
-      throw new Error('Arquivo CSV vazio ou inválido');
+      throw new AppError(400, 'Arquivo CSV vazio ou inválido');
     }
+
+    if (records.length > MAX_PREVIEW_ROWS) {
+      throw new AppError(400, `Arquivo muito grande: ${records.length} linhas. O limite é de ${MAX_PREVIEW_ROWS} linhas.`);
+    }
+
+    // Extract headers from the parsed records (avoids parsing the file twice)
+    const headers = Object.keys(records[0]);
 
     // Validate that expected columns exist
     const requiredCols = [mapping.columns.date, mapping.columns.value, mapping.columns.description];
     const missingCols = requiredCols.filter(col => !headers.includes(col));
     if (missingCols.length > 0) {
-      throw new Error(`Colunas não encontradas no CSV: ${missingCols.join(', ')}`);
+      throw new AppError(400, `Colunas não encontradas no CSV: ${missingCols.join(', ')}`);
     }
 
     // Load user categories with keywords for matching

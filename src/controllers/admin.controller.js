@@ -1,6 +1,7 @@
 const userService = require('../services/user.service');
 const createError = require('../middlewares/createError');
 const { hashPassword, comparePassword } = require('../utils/password.utils');
+const AppError = require('../utils/AppError');
 
 const listUsers = async (req, res) => {
   try {
@@ -28,9 +29,11 @@ const getUser = async (req, res) => {
     const user = await userService.getUserSummary(req.params.id);
     res.json(user);
   } catch (error) {
+    if (error instanceof AppError) {
+      return res.status(error.statusCode).json(createError(error.statusCode, error.message));
+    }
     console.error('Admin get user error:', error);
-    const status = error.message === 'Usuário não encontrado' ? 404 : 500;
-    res.status(status).json(createError(status, error.message));
+    res.status(500).json(createError(500, 'Erro ao buscar usuário'));
   }
 };
 
@@ -53,15 +56,25 @@ const updateUser = async (req, res) => {
       if (!isValid) {
         return res.status(401).json(createError(401, 'Senha do administrador incorreta'));
       }
-      updates.password = await hashPassword(password);
     }
 
+    // Apply allowlisted field updates (firstName, lastName, email, role)
     const user = await userService.adminUpdateUser(req.params.id, updates);
+
+    // Password is handled separately — adminUpdateUser's allowlist intentionally excludes it
+    if (password) {
+      const targetUser = await userService.findById(req.params.id);
+      targetUser.password = await hashPassword(password);
+      await targetUser.save();
+    }
+
     res.json(user);
   } catch (error) {
+    if (error instanceof AppError) {
+      return res.status(error.statusCode).json(createError(error.statusCode, error.message));
+    }
     console.error('Admin update user error:', error);
-    const status = error.message === 'Usuário não encontrado' ? 404 : 400;
-    res.status(status).json(createError(status, error.message));
+    res.status(500).json(createError(500, 'Erro ao atualizar usuário'));
   }
 };
 
@@ -77,9 +90,11 @@ const deleteUser = async (req, res) => {
     await userService.adminDeleteUser(req.params.id);
     res.json({ message: 'Usuário excluído com sucesso pelo administrador' });
   } catch (error) {
+    if (error instanceof AppError) {
+      return res.status(error.statusCode).json(createError(error.statusCode, error.message));
+    }
     console.error('Admin delete user error:', error);
-    const status = error.message === 'Usuário não encontrado' ? 404 : 400;
-    res.status(status).json(createError(status, error.message));
+    res.status(500).json(createError(500, 'Erro ao excluir usuário'));
   }
 };
 
@@ -103,9 +118,11 @@ const updateRole = async (req, res) => {
     const user = await userService.updateUserRole(req.params.id, role);
     res.json(user);
   } catch (error) {
+    if (error instanceof AppError) {
+      return res.status(error.statusCode).json(createError(error.statusCode, error.message));
+    }
     console.error('Admin update role error:', error);
-    const status = error.message === 'Usuário não encontrado' ? 404 : 500;
-    res.status(status).json(createError(status, error.message));
+    res.status(500).json(createError(500, 'Erro ao atualizar cargo'));
   }
 };
 
