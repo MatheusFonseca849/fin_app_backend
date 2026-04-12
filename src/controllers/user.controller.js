@@ -293,10 +293,11 @@ const login = async (req, res) => {
     const refreshToken = generateRefreshToken({ id: user._id, tokenVersion: user.tokenVersion, fingerprint });
 
     // Set cookie
+    const isProduction = process.env.NODE_ENV === 'production';
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'strict',
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
 
@@ -675,10 +676,11 @@ const refresh = async (req, res) => {
     // Rotate refresh token — issue a new one on every refresh (preserve fingerprint)
     const fingerprint = generateFingerprint(req.headers['user-agent']);
     const newRefreshToken = generateRefreshToken({ id: user._id, tokenVersion: user.tokenVersion, fingerprint });
+    const isProduction = process.env.NODE_ENV === 'production';
     res.cookie('refreshToken', newRefreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'strict',
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
 
