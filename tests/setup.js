@@ -1,11 +1,14 @@
 /**
  * Shared test database lifecycle for all test files.
  *
+ * Uses MongoMemoryReplSet (replica set) to support MongoDB transactions
+ * required by withTransaction() in controllers and services.
+ *
  * Usage in each test file:
  *   const { setupTestDB } = require('./setup');
  *   setupTestDB();
  */
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const mongoose = require('mongoose');
 
 // Set test environment variables
@@ -15,17 +18,19 @@ process.env.JWT_REFRESH_SECRET = 'test-refresh-secret-key-12345';
 process.env.CLIENT_URL = 'http://localhost:3001';
 
 function setupTestDB() {
-  let mongoServer;
+  let replSet;
 
   beforeAll(async () => {
-    mongoServer = await MongoMemoryServer.create();
-    const uri = mongoServer.getUri();
+    replSet = await MongoMemoryReplSet.create({
+      replSet: { count: 1 },
+    });
+    const uri = replSet.getUri();
     await mongoose.connect(uri);
-  });
+  }, 60000);
 
   afterAll(async () => {
     await mongoose.disconnect();
-    if (mongoServer) await mongoServer.stop();
+    if (replSet) await replSet.stop();
   });
 
   afterEach(async () => {

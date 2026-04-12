@@ -88,13 +88,4 @@ mongoose.connection.on('disconnected', () => {
   console.log('📊 Mongoose disconnected');
 });
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  const redisClient = require('./redis');
-  await redisClient.disconnect();
-  await database.disconnect();
-  console.log('👋 Application terminated');
-  process.exit(0);
-});
-
 module.exports = database;

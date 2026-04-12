@@ -86,10 +86,10 @@ describe('Admin Endpoints', () => {
         .set('Authorization', `Bearer ${adminToken}`);
 
       expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('users');
-      expect(Array.isArray(res.body.users)).toBe(true);
+      expect(res.body).toHaveProperty('data');
+      expect(Array.isArray(res.body.data)).toBe(true);
       // admin + 2 users = 3
-      expect(res.body.count).toBe(3);
+      expect(res.body.pagination.total).toBe(3);
     });
 
     it('should not expose passwords', async () => {
@@ -98,7 +98,7 @@ describe('Admin Endpoints', () => {
         .set('Authorization', `Bearer ${adminToken}`);
 
       expect(res.status).toBe(200);
-      res.body.users.forEach(user => {
+      res.body.data.forEach(user => {
         expect(user.password).toBeUndefined();
       });
     });
@@ -228,7 +228,7 @@ describe('Admin Endpoints', () => {
         .set('Origin', ORIGIN)
         .send({ role: 'superadmin' });
 
-      expect([400, 500]).toContain(res.status);
+      expect(res.status).toBe(400);
     });
   });
 

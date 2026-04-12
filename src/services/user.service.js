@@ -2,6 +2,8 @@ const User = require('../models/User.model');
 const transactionService = require('./transaction.service');
 const categoryService = require('./category.service');
 const { deleteAvatar } = require('../utils/upload.utils');
+const { withTransaction } = require('../utils/withTransaction');
+const AppError = require('../utils/AppError');
 
 class UserService {
   
@@ -23,8 +25,8 @@ class UserService {
     return savedUser;
   }
 
-  async findById(id) {
-    return await User.findById(id);
+  async findById(id, { session } = {}) {
+    return await User.findById(id).session(session);
   }
 
   async findByEmail(email) {
@@ -59,12 +61,20 @@ class UserService {
 
   async deleteUser(id) {
     const user = await User.findById(id);
-    if (!user) throw new Error('Usuário não encontrado');
+    if (!user) throw new AppError(404, 'Usuário não encontrado');
 
-    await transactionService.deleteAllUserTransactions(id);
-    await categoryService.deleteAllUserCategories(id);
-    await deleteAvatar(id);  // Clean up cloud storage
-    return await User.findByIdAndDelete(id);
+    await withTransaction(async (session) => {
+      await transactionService.deleteAllUserTransactions(id, { session });
+      await categoryService.deleteAllUserCategories(id, { session });
+      await User.findByIdAndDelete(id, { session });
+    });
+
+    // Best-effort cloud cleanup (outside transaction)
+    try {
+      await deleteAvatar(id);
+    } catch (error) {
+      console.error(`Failed to delete avatar for user ${id}:`, error.message);
+    }
   }
 
   async getAllUsers() {
@@ -91,7 +101,7 @@ class UserService {
 
   async getUserSummary(userId) {
     const user = await User.findById(userId).select('-password').lean();
-    if (!user) throw new Error('Usuário não encontrado');
+    if (!user) throw new AppError(404, 'Usuário não encontrado');
 
     const transactionCount = await transactionService.getTransactionCount(userId);
     const categoryCount = await categoryService.getCategoryCount(userId);
@@ -120,21 +130,29 @@ class UserService {
       { new: true, runValidators: true }
     ).select('-password');
 
-    if (!user) throw new Error('Usuário não encontrado');
+    if (!user) throw new AppError(404, 'Usuário não encontrado');
     return user;
   }
 
   async adminDeleteUser(userId) {
     const user = await User.findById(userId);
-    if (!user) throw new Error('Usuário não encontrado');
+    if (!user) throw new AppError(404, 'Usuário não encontrado');
     if (user.role === 'admin') {
-      throw new Error('Não é possível excluir outro administrador');
+      throw new AppError(403, 'Não é possível excluir outro administrador');
     }
 
-    await transactionService.deleteAllUserTransactions(userId);
-    await categoryService.deleteAllUserCategories(userId);
-    await deleteAvatar(userId);  // Clean up cloud storage
-    return await User.findByIdAndDelete(userId);
+    await withTransaction(async (session) => {
+      await transactionService.deleteAllUserTransactions(userId, { session });
+      await categoryService.deleteAllUserCategories(userId, { session });
+      await User.findByIdAndDelete(userId, { session });
+    });
+
+    // Best-effort cloud cleanup (outside transaction)
+    try {
+      await deleteAvatar(userId);
+    } catch (error) {
+      console.error(`Failed to delete avatar for user ${userId}:`, error.message);
+    }
   }
 
   async updateUserRole(userId, role) {
@@ -144,21 +162,23 @@ class UserService {
       { new: true, runValidators: true }
     ).select('-password');
 
-    if (!user) throw new Error('Usuário não encontrado');
+    if (!user) throw new AppError(404, 'Usuário não encontrado');
     return user;
   }
 
   async getSystemStats() {
-    const totalUsers = await User.countDocuments();
-    const adminCount = await User.countDocuments({ role: 'admin' });
-    const userCount = await User.countDocuments({ role: 'user' });
-    const totalTransactions = await transactionService.getSystemTransactionCount();
+    const [roleCounts, totalTransactions] = await Promise.all([
+      User.aggregate([{ $group: { _id: '$role', count: { $sum: 1 } } }]),
+      transactionService.getSystemTransactionCount(),
+    ]);
+
+    const countByRole = Object.fromEntries(roleCounts.map(r => [r._id, r.count]));
 
     return {
       users: {
-        total: totalUsers,
-        admins: adminCount,
-        regular: userCount
+        total: (countByRole.admin || 0) + (countByRole.user || 0),
+        admins: countByRole.admin || 0,
+        regular: countByRole.user || 0
       },
       transactions: {
         total: totalTransactions
@@ -185,11 +205,11 @@ class UserService {
    * Atomically adjust the user's balance by a signed delta (in cents).
    * Uses $inc to avoid race conditions.
    */
-  async adjustBalance(userId, delta) {
+  async adjustBalance(userId, delta, { session } = {}) {
     return await User.findByIdAndUpdate(
       userId,
       { $inc: { balance: delta } },
-      { new: true }
+      { new: true, session }
     );
   }
 

@@ -3,6 +3,7 @@ const Transaction = require('../models/schemas/transaction.schema');
 const userService = require('./user.service');
 const cacheService = require('./cache.service');
 const { acquireLock } = require('../utils/lock.utils');
+const { withTransaction } = require('../utils/withTransaction');
 
 class RecurrenceService {
 
@@ -37,6 +38,44 @@ class RecurrenceService {
     }
   }
 
+  /**
+   * Process a single recurrent transaction atomically:
+   * insert the new entry, stamp lastApplied, and adjust balance
+   * all within one MongoDB transaction.
+   */
+  async processSingleRecurrence(recurrent, now) {
+    return withTransaction(async (session) => {
+      const isPaid = recurrent.type === 'credito';
+
+      // 1. Insert the new transaction entry
+      const [created] = await Transaction.create([{
+        userId: recurrent.userId,
+        description: recurrent.description,
+        value: recurrent.value,
+        type: recurrent.type,
+        category: recurrent.category,
+        isRecurrent: false,
+        isPaid,
+        timestamp: now
+      }], { session });
+
+      // 2. Stamp lastApplied on the recurrent template
+      await Transaction.updateOne(
+        { _id: recurrent._id },
+        { $set: { lastApplied: now } },
+        { session }
+      );
+
+      // 3. Adjust balance for auto-paid transactions (income)
+      if (isPaid) {
+        const delta = userService.getBalanceDelta(created.value, created.type);
+        await userService.adjustBalance(recurrent.userId.toString(), delta, { session });
+      }
+
+      return created;
+    });
+  }
+
   async processAllRecurrences() {
     const today = new Date();
     const currentDay = today.getDate();
@@ -61,62 +100,23 @@ class RecurrenceService {
       return 0;
     }
 
-    // 1. Batch insert all new transaction entries at once
-    const newTransactions = recurrents.map(r => ({
-      userId: r.userId,
-      description: r.description,
-      value: r.value,
-      type: r.type,
-      category: r.category,
-      isRecurrent: false,
-      isPaid: r.type === 'credito', // Income is always paid; expenses need manual confirmation
-      timestamp: now
-    }));
+    // Process each recurrent atomically — failures are isolated per recurrence
+    let successCount = 0;
+    const affectedUserIds = new Set();
 
-    let insertedDocs = [];
-    try {
-      const result = await Transaction.insertMany(newTransactions, { ordered: false });
-      insertedDocs = result;
-    } catch (error) {
-      // ordered:false means it continues past individual failures
-      insertedDocs = error.insertedDocs || [];
-      console.error(`❌ [Recurrence] insertMany partial failure: ${error.message}`);
-    }
-
-    // 2. Batch update all recurrent lastApplied timestamps via bulkWrite
-    const bulkOps = recurrents.map(r => ({
-      updateOne: {
-        filter: { _id: r._id },
-        update: { $set: { lastApplied: now } }
-      }
-    }));
-
-    try {
-      await Transaction.bulkWrite(bulkOps, { ordered: false });
-    } catch (error) {
-      console.error(`❌ [Recurrence] bulkWrite error: ${error.message}`);
-    }
-
-    // 3. Adjust balances only for paid transactions (income is auto-paid).
-    //    Expense transactions remain unpaid until the user marks them.
-    const balanceDeltas = {};
-    for (const doc of insertedDocs) {
-      if (!doc.isPaid) continue;
-      const uid = doc.userId.toString();
-      const delta = userService.getBalanceDelta(doc.value, doc.type);
-      balanceDeltas[uid] = (balanceDeltas[uid] || 0) + delta;
-    }
-
-    for (const [uid, delta] of Object.entries(balanceDeltas)) {
+    for (const recurrent of recurrents) {
       try {
-        await userService.adjustBalance(uid, delta);
+        await this.processSingleRecurrence(recurrent, now);
+        successCount++;
+        affectedUserIds.add(recurrent.userId.toString());
       } catch (error) {
-        console.error(`❌ [Recurrence] Failed to adjust balance for user ${uid}:`, error.message);
+        // Transaction rolled back — this recurrent keeps its old lastApplied,
+        // so it will be retried on the next run. No duplicate, no data loss.
+        console.error(`❌ [Recurrence] Failed for recurrence ${recurrent._id}: ${error.message}`);
       }
     }
 
-    // 4. Invalidate caches for all affected users
-    const affectedUserIds = [...new Set(recurrents.map(r => r.userId.toString()))];
+    // Invalidate caches for all affected users
     for (const uid of affectedUserIds) {
       try {
         await cacheService.invalidateTransactions(uid);
@@ -126,8 +126,8 @@ class RecurrenceService {
       }
     }
 
-    console.log(`✅ [Recurrence] Done. Created ${insertedDocs.length} transaction(s) from ${recurrents.length} recurrence(s).`);
-    return insertedDocs.length;
+    console.log(`✅ [Recurrence] Done. Created ${successCount} transaction(s) from ${recurrents.length} recurrence(s).`);
+    return successCount;
   }
 }
 

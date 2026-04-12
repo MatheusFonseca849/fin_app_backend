@@ -8,13 +8,47 @@ const { BANK_MAPPINGS } = require('../config/bankMappings');
 const cacheService = require('../services/cache.service');
 const { acquireLock } = require('../utils/lock.utils');
 const redisClient = require('../config/redis');
+const { withTransaction } = require('../utils/withTransaction');
+const AppError = require('../utils/AppError');
+const Transaction = require('../models/schemas/transaction.schema');
+
+/**
+ * Parse a YYYY-MM-DD string strictly.
+ * Returns a Date at midnight UTC, or null if the format is wrong
+ * or the date rolls over (e.g. 2024-02-30 → March).
+ */
+const parseStrictDate = (str) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(str)) return null;
+  const [y, m, d] = str.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) return null;
+  return date;
+};
 
 const getAll = async (req, res) => {
   try {
     const { page, limit, type, category, isRecurrent, isPaid, startDate, endDate } = req.query;
     const pageNum = page ? parseInt(page) : 1;
     const limitNum = limit ? parseInt(limit) : 50;
+    if (isNaN(pageNum) || isNaN(limitNum)) {
+      return res.status(400).json(createError(400, 'page e limit devem ser números válidos'));
+    }
     const hasFilters = type !== undefined || category !== undefined || isRecurrent !== undefined || isPaid !== undefined || startDate || endDate || limitNum !== 50;
+
+    // Validate date filters when present
+    let parsedStartDate, parsedEndDate;
+    if (startDate) {
+      parsedStartDate = parseStrictDate(startDate);
+      if (!parsedStartDate) {
+        return res.status(400).json(createError(400, 'startDate inválido. Use o formato YYYY-MM-DD'));
+      }
+    }
+    if (endDate) {
+      parsedEndDate = parseStrictDate(endDate);
+      if (!parsedEndDate) {
+        return res.status(400).json(createError(400, 'endDate inválido. Use o formato YYYY-MM-DD'));
+      }
+    }
 
     const cached = await cacheService.getCachedTransactions(req.user.id, pageNum);
     if (cached && !hasFilters) return res.json(cached);
@@ -24,8 +58,8 @@ const getAll = async (req, res) => {
       limit: limitNum,
       type,
       category,
-      startDate,
-      endDate
+      startDate: parsedStartDate,
+      endDate: parsedEndDate
     };
     if (isRecurrent !== undefined) {
       options.isRecurrent = isRecurrent === 'true';
@@ -57,12 +91,44 @@ const getAll = async (req, res) => {
   }
 };
 
+const getCalendar = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    if (!startDate || !endDate) {
+      return res.status(400).json(createError(400, "startDate e endDate são obrigatórios"));
+    }
+
+    const start = parseStrictDate(startDate);
+    const end = parseStrictDate(endDate);
+    if (!start || !end) {
+      return res.status(400).json(createError(400, "Datas inválidas. Use o formato YYYY-MM-DD"));
+    }
+
+    const MAX_RANGE_DAYS = 93;
+    const diffDays = (end - start) / (1000 * 60 * 60 * 24);
+    if (diffDays < 0 || diffDays > MAX_RANGE_DAYS) {
+      return res.status(400).json(createError(400, `Intervalo máximo permitido: ${MAX_RANGE_DAYS} dias`));
+    }
+
+    const data = await transactionService.getCalendarTransactions(req.user.id, start, end);
+    res.json({ data });
+  } catch (error) {
+    console.error("Get calendar transactions error:", error);
+    res.status(500).json(createError(500, "Erro ao buscar transações do calendário"));
+  }
+};
+
 const getMonthlySummary = async (req, res) => {
   try {
     const { months } = req.query;
     const opts = {};
     const hasMonthsFilter = months !== undefined;
-    if (hasMonthsFilter) opts.months = parseInt(months);
+    if (hasMonthsFilter) {
+      opts.months = parseInt(months);
+      if (isNaN(opts.months) || opts.months < 1) {
+        return res.status(400).json(createError(400, 'months deve ser um número válido maior que 0'));
+      }
+    }
 
     // Serve from cache when fetching the full (unfiltered) summary
     if (!hasMonthsFilter) {
@@ -118,20 +184,24 @@ const create = async (req, res) => {
     }
     if (date) transactionData.timestamp = new Date(date);
 
-    const transaction = await transactionService.addTransaction(req.user.id, transactionData);
+    const { transaction, balance } = await withTransaction(async (session) => {
+      const tx = await transactionService.addTransaction(req.user.id, transactionData, { session });
 
-    // Only adjust balance when the transaction is marked as paid
-    let balance;
-    if (transaction.isPaid) {
-      const delta = userService.getBalanceDelta(transaction.value, transaction.type);
-      const updatedUser = await userService.adjustBalance(req.user.id, delta);
-      await cacheService.invalidateUser(req.user.id);
-      balance = updatedUser.balance;
-    } else {
-      const user = await userService.findById(req.user.id);
-      balance = user.balance;
-    }
+      // Only adjust balance when the transaction is marked as paid
+      let bal;
+      if (tx.isPaid) {
+        const delta = userService.getBalanceDelta(tx.value, tx.type);
+        const updatedUser = await userService.adjustBalance(req.user.id, delta, { session });
+        bal = updatedUser.balance;
+      } else {
+        const user = await userService.findById(req.user.id, { session });
+        bal = user.balance;
+      }
 
+      return { transaction: tx, balance: bal };
+    });
+
+    await cacheService.invalidateUser(req.user.id);
     await cacheService.invalidateTransactions(req.user.id);
     res.status(201).json({ transaction, balance });
   } catch (error) {
@@ -179,8 +249,11 @@ const importPreview = async (req, res) => {
 
     res.json({ rows, errors, headers });
   } catch (error) {
+    if (error instanceof AppError) {
+      return res.status(error.statusCode).json(createError(error.statusCode, error.message));
+    }
     console.error("Import preview error:", error);
-    res.status(400).json(createError(400, error.message || "Erro ao processar CSV"));
+    res.status(400).json(createError(400, "Erro ao processar CSV"));
   }
 };
 
@@ -214,8 +287,8 @@ const importConfirm = async (req, res) => {
         continue;
       }
 
-      const value = parseFloat(tx.value);
-      if (isNaN(value) || value <= 0) {
+      // Value is already in cents (sanitized by validator)
+      if (!tx.value || tx.value <= 0) {
         validationErrors.push(`${lineLabel}: valor inválido`);
         continue;
       }
@@ -228,7 +301,7 @@ const importConfirm = async (req, res) => {
 
       docs.push({
         description: tx.description,
-        value: Math.round(value * 100),
+        value: tx.value,
         type: tx.type,
         category: tx.categoryId,
         timestamp: new Date(tx.date),
@@ -250,42 +323,55 @@ const importConfirm = async (req, res) => {
     }
 
     try {
-      // Bulk add
-      const result = await transactionService.bulkAddTransactions(req.user.id, docs);
+      const importResult = await withTransaction(async (session) => {
+        // Bulk add
+        const result = await transactionService.bulkAddTransactions(req.user.id, docs, { session });
 
-      // Adjust balance for paid transactions
-      if (result.createdCount > 0 && result.insertedDocs) {
-        let netDelta = 0;
-        for (const tx of result.insertedDocs) {
-          if (tx.isPaid) {
-            netDelta += userService.getBalanceDelta(tx.value, tx.type);
+        // Adjust balance for paid transactions
+        if (result.createdCount > 0 && result.insertedDocs) {
+          let netDelta = 0;
+          for (const tx of result.insertedDocs) {
+            if (tx.isPaid) {
+              netDelta += userService.getBalanceDelta(tx.value, tx.type);
+            }
+          }
+          if (netDelta !== 0) {
+            await userService.adjustBalance(req.user.id, netDelta, { session });
           }
         }
-        if (netDelta !== 0) {
-          await userService.adjustBalance(req.user.id, netDelta);
-          await cacheService.invalidateUser(req.user.id);
-        }
-      }
 
+        // Read balance inside the transaction for consistency
+        const user = await userService.findById(req.user.id, { session });
+
+        return {
+          createdCount: result.createdCount,
+          skippedCount: result.skippedCount,
+          errorCount: result.errorCount,
+          errors: result.errors,
+          balance: user.balance
+        };
+      });
+
+      await cacheService.invalidateUser(req.user.id);
       await cacheService.invalidateTransactions(req.user.id);
-
-      // Return updated balance
-      const user = await userService.findById(req.user.id);
 
       res.status(201).json({
         message: "Importação concluída",
-        createdCount: result.createdCount,
-        skippedCount: result.skippedCount,
-        errorCount: result.errorCount + validationErrors.length,
-        errors: [...validationErrors, ...result.errors],
-        balance: user.balance
+        createdCount: importResult.createdCount,
+        skippedCount: importResult.skippedCount,
+        errorCount: importResult.errorCount + validationErrors.length,
+        errors: [...validationErrors, ...importResult.errors],
+        balance: importResult.balance
       });
     } finally {
       if (release) await release();
     }
   } catch (error) {
+    if (error instanceof AppError) {
+      return res.status(error.statusCode).json(createError(error.statusCode, error.message));
+    }
     console.error("Import confirm error:", error);
-    res.status(500).json(createError(500, error.message || "Erro ao importar transações"));
+    res.status(500).json(createError(500, "Erro ao importar transações"));
   }
 };
 
@@ -309,34 +395,41 @@ const bulkDelete = async (req, res) => {
     }
 
     try {
-      const { deletedCount, deletedTransactions } = await transactionService.bulkDeleteTransactions(req.user.id, ids);
+      const { deletedCount, balance } = await withTransaction(async (session) => {
+        const { deletedCount: count, deletedTransactions } = await transactionService.bulkDeleteTransactions(req.user.id, ids, { session });
 
-      // Reverse balance for paid transactions
-      let netDelta = 0;
-      for (const tx of deletedTransactions) {
-        if (tx.isPaid) {
-          netDelta -= userService.getBalanceDelta(tx.value, tx.type);
+        // Reverse balance for paid transactions
+        let netDelta = 0;
+        for (const tx of deletedTransactions) {
+          if (tx.isPaid) {
+            netDelta -= userService.getBalanceDelta(tx.value, tx.type);
+          }
         }
-      }
 
-      let balance;
-      if (netDelta !== 0) {
-        const updatedUser = await userService.adjustBalance(req.user.id, netDelta);
-        await cacheService.invalidateUser(req.user.id);
-        balance = updatedUser.balance;
-      } else {
-        const user = await userService.findById(req.user.id);
-        balance = user.balance;
-      }
+        let bal;
+        if (netDelta !== 0) {
+          const updatedUser = await userService.adjustBalance(req.user.id, netDelta, { session });
+          bal = updatedUser.balance;
+        } else {
+          const user = await userService.findById(req.user.id, { session });
+          bal = user.balance;
+        }
 
+        return { deletedCount: count, balance: bal };
+      });
+
+      await cacheService.invalidateUser(req.user.id);
       await cacheService.invalidateTransactions(req.user.id);
       res.json({ message: `${deletedCount} transação(ões) excluída(s)`, deletedCount, balance });
     } finally {
       if (release) await release();
     }
   } catch (error) {
+    if (error instanceof AppError) {
+      return res.status(error.statusCode).json(createError(error.statusCode, error.message));
+    }
     console.error("Bulk delete error:", error);
-    res.status(500).json(createError(500, error.message || "Erro ao excluir transações"));
+    res.status(500).json(createError(500, "Erro ao excluir transações"));
   }
 };
 
@@ -386,67 +479,74 @@ const bulkUpdate = async (req, res) => {
     }
 
     try {
-      let updatedCount, oldTransactions, newTransactions;
+      const { updatedCount, balance } = await withTransaction(async (session) => {
+        let uCount, oldTransactions, newTransactions;
 
-      if (safeUpdates.type !== 'credito' && safeUpdates.isPaid !== undefined) {
-        // Need to protect existing credito transactions from isPaid = false
-        const Transaction = require('../models/schemas/transaction.schema');
-        const targetTxs = await Transaction.find({ _id: { $in: ids }, userId: req.user.id });
-        const creditoIds = targetTxs.filter(tx => tx.type === 'credito').map(tx => tx._id.toString());
-        const debitoIds = targetTxs.filter(tx => tx.type !== 'credito').map(tx => tx._id.toString());
+        if (safeUpdates.type !== 'credito' && safeUpdates.isPaid !== undefined) {
+          // Need to protect existing credito transactions from isPaid = false
+          
+          const targetTxs = await Transaction.find({ _id: { $in: ids }, userId: req.user.id }).session(session);
+          const creditoIds = targetTxs.filter(tx => tx.type === 'credito').map(tx => tx._id.toString());
+          const debitoIds = targetTxs.filter(tx => tx.type !== 'credito').map(tx => tx._id.toString());
 
-        // Update credito transactions with isPaid forced to true
-        const creditoUpdates = { ...safeUpdates, isPaid: true };
-        const creditoResult = creditoIds.length > 0
-          ? await transactionService.bulkUpdateTransactions(req.user.id, creditoIds, creditoUpdates)
-          : { updatedCount: 0, oldTransactions: [], newTransactions: [] };
+          // Update credito transactions with isPaid forced to true
+          const creditoUpdates = { ...safeUpdates, isPaid: true };
+          const creditoResult = creditoIds.length > 0
+            ? await transactionService.bulkUpdateTransactions(req.user.id, creditoIds, creditoUpdates, { session })
+            : { updatedCount: 0, oldTransactions: [], newTransactions: [] };
 
-        // Update debito transactions normally
-        const debitoResult = debitoIds.length > 0
-          ? await transactionService.bulkUpdateTransactions(req.user.id, debitoIds, safeUpdates)
-          : { updatedCount: 0, oldTransactions: [], newTransactions: [] };
+          // Update debito transactions normally
+          const debitoResult = debitoIds.length > 0
+            ? await transactionService.bulkUpdateTransactions(req.user.id, debitoIds, safeUpdates, { session })
+            : { updatedCount: 0, oldTransactions: [], newTransactions: [] };
 
-        updatedCount = creditoResult.updatedCount + debitoResult.updatedCount;
-        oldTransactions = [...creditoResult.oldTransactions, ...debitoResult.oldTransactions];
-        newTransactions = [...creditoResult.newTransactions, ...debitoResult.newTransactions];
-      } else {
-        const result = await transactionService.bulkUpdateTransactions(req.user.id, ids, safeUpdates);
-        updatedCount = result.updatedCount;
-        oldTransactions = result.oldTransactions;
-        newTransactions = result.newTransactions;
-      }
-
-      // Recalculate balance delta
-      let netDelta = 0;
-      for (const oldTx of oldTransactions) {
-        if (oldTx.isPaid) {
-          netDelta -= userService.getBalanceDelta(oldTx.value, oldTx.type);
+          uCount = creditoResult.updatedCount + debitoResult.updatedCount;
+          oldTransactions = [...creditoResult.oldTransactions, ...debitoResult.oldTransactions];
+          newTransactions = [...creditoResult.newTransactions, ...debitoResult.newTransactions];
+        } else {
+          const result = await transactionService.bulkUpdateTransactions(req.user.id, ids, safeUpdates, { session });
+          uCount = result.updatedCount;
+          oldTransactions = result.oldTransactions;
+          newTransactions = result.newTransactions;
         }
-      }
-      for (const newTx of newTransactions) {
-        if (newTx.isPaid) {
-          netDelta += userService.getBalanceDelta(newTx.value, newTx.type);
+
+        // Recalculate balance delta
+        let netDelta = 0;
+        for (const oldTx of oldTransactions) {
+          if (oldTx.isPaid) {
+            netDelta -= userService.getBalanceDelta(oldTx.value, oldTx.type);
+          }
         }
-      }
+        for (const newTx of newTransactions) {
+          if (newTx.isPaid) {
+            netDelta += userService.getBalanceDelta(newTx.value, newTx.type);
+          }
+        }
 
-      let balance;
-      if (netDelta !== 0) {
-        const updatedUser = await userService.adjustBalance(req.user.id, netDelta);
-        await cacheService.invalidateUser(req.user.id);
-        balance = updatedUser.balance;
-      } else {
-        const user = await userService.findById(req.user.id);
-        balance = user.balance;
-      }
+        let bal;
+        if (netDelta !== 0) {
+          const updatedUser = await userService.adjustBalance(req.user.id, netDelta, { session });
+          bal = updatedUser.balance;
+        } else {
+          const user = await userService.findById(req.user.id, { session });
+          bal = user.balance;
+        }
 
+        return { updatedCount: uCount, balance: bal };
+      });
+
+      await cacheService.invalidateUser(req.user.id);
       await cacheService.invalidateTransactions(req.user.id);
       res.json({ message: `${updatedCount} transação(ões) atualizada(s)`, updatedCount, balance });
     } finally {
       if (release) await release();
     }
   } catch (error) {
+    if (error instanceof AppError) {
+      return res.status(error.statusCode).json(createError(error.statusCode, error.message));
+    }
     console.error("Bulk update error:", error);
-    res.status(500).json(createError(500, error.message || "Erro ao atualizar transações"));
+    res.status(500).json(createError(500, "Erro ao atualizar transações"));
   }
 };
 
@@ -488,63 +588,78 @@ const update = async (req, res) => {
     if (isActive !== undefined) updates.isActive = isActive;
     if (isPaid !== undefined) updates.isPaid = isPaid;
 
-    // Income transactions are always considered paid
-    const effectiveType = type || (await transactionService.getTransactionById(req.user.id, req.params.id))?.type;
-    if (effectiveType === 'credito') updates.isPaid = true;
+    const { newTransaction, balance } = await withTransaction(async (session) => {
+      const { oldTransaction, newTransaction: newTx } = await transactionService.updateTransaction(
+        req.user.id,
+        req.params.id,
+        updates,
+        { session }
+      );
 
-    const { oldTransaction, newTransaction } = await transactionService.updateTransaction(
-      req.user.id,
-      req.params.id,
-      updates,
-    );
+      // Income transactions are always considered paid
+      const effectiveType = type || oldTransaction.type;
+      if (effectiveType === 'credito' && !newTx.isPaid) {
+        newTx.isPaid = true;
+        await newTx.save({ session });
+        await newTx.populate('category');
+      }
 
-    // Balance adjustment depends on isPaid state transition
-    const wasPaid = oldTransaction.isPaid;
-    const nowPaid = newTransaction.isPaid;
+      // Balance adjustment depends on isPaid state transition
+      const wasPaid = oldTransaction.isPaid;
+      const nowPaid = newTx.isPaid;
 
-    let netDelta = 0;
-    if (wasPaid) netDelta -= userService.getBalanceDelta(oldTransaction.value, oldTransaction.type);
-    if (nowPaid) netDelta += userService.getBalanceDelta(newTransaction.value, newTransaction.type);
+      let netDelta = 0;
+      if (wasPaid) netDelta -= userService.getBalanceDelta(oldTransaction.value, oldTransaction.type);
+      if (nowPaid) netDelta += userService.getBalanceDelta(newTx.value, newTx.type);
 
-    let balance;
-    if (netDelta !== 0) {
-      const updatedUser = await userService.adjustBalance(req.user.id, netDelta);
-      await cacheService.invalidateUser(req.user.id);
-      balance = updatedUser.balance;
-    } else {
-      const user = await userService.findById(req.user.id);
-      balance = user.balance;
-    }
+      let bal;
+      if (netDelta !== 0) {
+        const updatedUser = await userService.adjustBalance(req.user.id, netDelta, { session });
+        bal = updatedUser.balance;
+      } else {
+        const user = await userService.findById(req.user.id, { session });
+        bal = user.balance;
+      }
 
+      return { newTransaction: newTx, balance: bal };
+    });
+
+    await cacheService.invalidateUser(req.user.id);
     await cacheService.invalidateTransactions(req.user.id);
     res.json({ transaction: newTransaction, balance });
   } catch (error) {
+    if (error instanceof AppError) {
+      return res.status(error.statusCode).json(createError(error.statusCode, error.message));
+    }
     console.error("Update transaction error:", error);
-    res.status(500).json(createError(500, error.message));
+    res.status(500).json(createError(500, "Erro ao atualizar transação"));
   }
 };
 
 const remove = async (req, res) => {
   try {
-    const deleted = await transactionService.deleteTransaction(req.user.id, req.params.id);
+    const balance = await withTransaction(async (session) => {
+      const deleted = await transactionService.deleteTransaction(req.user.id, req.params.id, { session });
 
-    // Only reverse balance if the deleted transaction was paid
-    let balance;
-    if (deleted.isPaid) {
-      const delta = userService.getBalanceDelta(deleted.value, deleted.type);
-      const updatedUser = await userService.adjustBalance(req.user.id, -delta);
-      await cacheService.invalidateUser(req.user.id);
-      balance = updatedUser.balance;
-    } else {
-      const user = await userService.findById(req.user.id);
-      balance = user.balance;
-    }
+      // Only reverse balance if the deleted transaction was paid
+      if (deleted.isPaid) {
+        const delta = userService.getBalanceDelta(deleted.value, deleted.type);
+        const updatedUser = await userService.adjustBalance(req.user.id, -delta, { session });
+        return updatedUser.balance;
+      }
+      const user = await userService.findById(req.user.id, { session });
+      return user.balance;
+    });
 
+    await cacheService.invalidateUser(req.user.id);
     await cacheService.invalidateTransactions(req.user.id);
     res.json({ message: "Transação excluída com sucesso", balance });
   } catch (error) {
+    if (error instanceof AppError) {
+      return res.status(error.statusCode).json(createError(error.statusCode, error.message));
+    }
     console.error("Delete transaction error:", error);
-    res.status(500).json(createError(500, error.message));
+    res.status(500).json(createError(500, "Erro ao excluir transação"));
   }
 };
 
@@ -565,6 +680,7 @@ const getDashboard = async (req, res) => {
 
 module.exports = {
   getAll,
+  getCalendar,
   getMonthlySummary,
   getDashboard,
   create,

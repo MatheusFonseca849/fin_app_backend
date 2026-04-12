@@ -1,21 +1,16 @@
 const { body, param, validationResult } = require('express-validator');
 const { TRANSACTION_TYPE_VALUES } = require('../constants/transactionTypes');
+const createError = require('./createError');
 
 // Reusable error handler
 const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({
-      error: {
-        status: 400,
-        message: 'Erro de validação',
-        details: errors.array().map(err => ({
-          field: err.path,
-          message: err.msg
-        })),
-        timestamp: new Date().toISOString()
-      }
-    });
+    const details = errors.array().map(err => ({
+      field: err.path,
+      message: err.msg
+    }));
+    return res.status(400).json(createError(400, 'Erro de validação', details));
   }
   next();
 };
@@ -156,6 +151,10 @@ const createTransactionValidation = [
     .optional()
     .isBoolean().withMessage('Pago deve ser verdadeiro ou falso'),
 
+  body('date')
+    .notEmpty().withMessage('Data é obrigatória')
+    .isISO8601({ strict: true, strictSeparator: true }).withMessage('Data deve estar no formato ISO 8601 (YYYY-MM-DD ou YYYY-MM-DDTHH:mm:ss)'),
+
   handleValidationErrors
 ];
 
@@ -197,6 +196,10 @@ const updateTransactionValidation = [
   body('isPaid')
     .optional()
     .isBoolean().withMessage('isPaid deve ser verdadeiro ou falso'),
+
+  body('date')
+    .optional()
+    .isISO8601({ strict: true, strictSeparator: true }).withMessage('Data deve estar no formato ISO 8601 (YYYY-MM-DD ou YYYY-MM-DDTHH:mm:ss)'),
 
   handleValidationErrors
 ];
@@ -460,10 +463,12 @@ const importConfirmValidation = [
   body('transactions.*.description')
     .trim()
     .notEmpty().withMessage('Descrição é obrigatória')
-    .isLength({ max: 500 }).withMessage('Descrição muito longa'),
+    .isLength({ max: 500 }).withMessage('Descrição muito longa')
+    .escape(),
 
   body('transactions.*.value')
-    .isFloat({ min: 0.01 }).withMessage('Valor deve ser um número positivo'),
+    .isFloat({ min: 0.01 }).withMessage('Valor deve ser um número positivo')
+    .customSanitizer(value => Math.round(value * 100)),
 
   body('transactions.*.type')
     .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
@@ -478,6 +483,16 @@ const importConfirmValidation = [
   body('transactions.*.isPaid')
     .optional()
     .isBoolean().withMessage('isPaid deve ser verdadeiro ou falso'),
+
+  handleValidationErrors
+];
+
+// ============ BALANCE VALIDATIONS ============
+
+const setBalanceValidation = [
+  body('balance')
+    .exists({ checkNull: true }).withMessage('Valor do saldo é obrigatório')
+    .isInt({ min: -999999999, max: 999999999 }).withMessage('Saldo deve ser um número inteiro entre -999999999 e 999999999 (em centavos)'),
 
   handleValidationErrors
 ];
@@ -500,5 +515,6 @@ module.exports = {
   bulkUpdateValidation,
   importConfirmValidation,
   verifyEmailValidation,
-  verifyEmailChangeValidation
+  verifyEmailChangeValidation,
+  setBalanceValidation
 };

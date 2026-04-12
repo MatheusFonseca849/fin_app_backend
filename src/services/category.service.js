@@ -1,5 +1,6 @@
 const Category = require('../models/schemas/category.schema');
 const { TRANSACTION_TYPES } = require('../constants/transactionTypes');
+const AppError = require('../utils/AppError');
 
 class CategoryService {
 
@@ -21,7 +22,7 @@ class CategoryService {
 
   async addCategory(userId, data) {
     const exists = await Category.findOne({ userId, name: data.name });
-    if (exists) throw new Error('Categoria já existe');
+    if (exists) throw new AppError(409, 'Categoria já existe');
 
     const category = new Category({ ...data, userId });
     return await category.save();
@@ -33,25 +34,35 @@ class CategoryService {
       updates,
       { new: true, runValidators: true }
     );
-    if (!category) throw new Error('Categoria não encontrada');
+    if (!category) throw new AppError(404, 'Categoria não encontrada');
     return category;
   }
 
-  async deleteCategory(userId, categoryId) {
-    const category = await Category.findOne({ _id: categoryId, userId });
-    if (!category) throw new Error('Categoria não encontrada');
+  async ensureSemCategoria(userId, { session } = {}) {
+    const existing = await Category.findOne({ userId, name: 'Sem Categoria' }).session(session || null);
+    if (existing) return existing;
 
-    // Find fallback category for transaction reassignment
-    const defaultCat = await Category.findOne({
+    const created = new Category({
       userId,
       name: 'Sem Categoria',
-      _id: { $ne: categoryId }
+      type: TRANSACTION_TYPES.DEBIT,
+      color: '#D5DBDB',
     });
+    return await created.save({ session });
+  }
+
+  async deleteCategory(userId, categoryId, { session } = {}) {
+    const category = await Category.findOne({ _id: categoryId, userId }).session(session);
+    if (!category) throw new AppError(404, 'Categoria não encontrada');
+
+    // Guarantee fallback category exists for transaction reassignment
+    const defaultCat = await this.ensureSemCategoria(userId, { session });
+    const fallbackId = defaultCat._id.equals(categoryId) ? null : defaultCat._id;
 
     const deletedId = category._id;
-    await Category.deleteOne({ _id: categoryId, userId });
+    await Category.deleteOne({ _id: categoryId, userId }, { session });
 
-    return { deletedId, fallbackId: defaultCat?._id || null };
+    return { deletedId, fallbackId };
   }
 
   // ============================================
@@ -83,8 +94,8 @@ class CategoryService {
   // Cleanup
   // ============================================
 
-  async deleteAllUserCategories(userId) {
-    return await Category.deleteMany({ userId });
+  async deleteAllUserCategories(userId, { session } = {}) {
+    return await Category.deleteMany({ userId }, { session });
   }
 }
 

@@ -1,4 +1,5 @@
 const createError = require('./createError');
+const AppError = require('../utils/AppError');
 
 /**
  * Global error handler middleware.
@@ -11,6 +12,11 @@ const errorHandler = (err, req, res, next) => {
     console.error('Unhandled error:', err.message);
   } else {
     console.error('Unhandled error:', err);
+  }
+
+  // Operational errors thrown via AppError
+  if (err instanceof AppError) {
+    return res.status(err.statusCode).json(createError(err.statusCode, err.message, err.details));
   }
 
   // CORS errors
