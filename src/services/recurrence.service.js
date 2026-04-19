@@ -45,7 +45,7 @@ class RecurrenceService {
    */
   async processSingleRecurrence(recurrent, now) {
     return withTransaction(async (session) => {
-      const isPaid = recurrent.type === 'credito';
+      const isPaid = recurrent.type === 'income';
 
       // 1. Insert the new transaction entry
       const [created] = await Transaction.create([{

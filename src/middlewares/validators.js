@@ -127,7 +127,7 @@ const createTransactionValidation = [
     .customSanitizer(value => Math.round(value * 100)), // Convert to cents
   
   body('type')
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "income" ou "expense"'),
   
   body('category')
     .optional()
@@ -175,7 +175,7 @@ const updateTransactionValidation = [
   
   body('type')
     .optional()
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "income" ou "expense"'),
   
   body('category')
     .optional()
@@ -327,7 +327,7 @@ const createCategoryValidation = [
     .escape(),
   
   body('type')
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "income" ou "expense"'),
   
   body('color')
     .optional()
@@ -358,7 +358,7 @@ const updateCategoryValidation = [
   
   body('type')
     .optional()
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "income" ou "expense"'),
   
   body('color')
     .optional()
@@ -431,7 +431,7 @@ const bulkUpdateValidation = [
 
   body('updates.type')
     .optional()
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "income" ou "expense"'),
 
   body('updates.category')
     .optional()
@@ -471,7 +471,7 @@ const importConfirmValidation = [
     .customSanitizer(value => Math.round(value * 100)),
 
   body('transactions.*.type')
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "income" ou "expense"'),
 
   body('transactions.*.categoryId')
     .isMongoId().withMessage('ID de categoria inválido'),

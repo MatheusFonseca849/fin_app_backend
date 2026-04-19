@@ -141,9 +141,9 @@ const getMonthlySummary = async (req, res) => {
     const data = raw.map(r => ({
       year: r._id.year,
       month: r._id.month,
-      despesas: r.despesas,
-      receitas: r.receitas,
-      saldo: r.receitas - r.despesas
+      expenses: r.expenses,
+      income: r.income,
+      balance: r.income - r.expenses
     }));
 
     const response = { data };
@@ -177,7 +177,7 @@ const create = async (req, res) => {
       transactionData.billingDay = billingDay;
     }
     // Income transactions are always considered paid
-    if (type === 'credito') {
+    if (type === 'income') {
       transactionData.isPaid = true;
     } else if (isPaid !== undefined) {
       transactionData.isPaid = isPaid;
@@ -305,7 +305,7 @@ const importConfirm = async (req, res) => {
         type: tx.type,
         category: tx.categoryId,
         timestamp: new Date(tx.date),
-        isPaid: tx.type === 'credito' ? true : (tx.isPaid || false)
+        isPaid: tx.type === 'income' ? true : (tx.isPaid || false)
       });
     }
 
@@ -463,9 +463,9 @@ const bulkUpdate = async (req, res) => {
     if (updates.date !== undefined) safeUpdates.timestamp = new Date(updates.date);
 
     // Income transactions are always paid.
-    // If changing type to credito, force isPaid = true for all.
-    // Otherwise, split: credito txs always keep isPaid = true, debito txs use provided value.
-    if (safeUpdates.type === 'credito') {
+    // If changing type to income, force isPaid = true for all.
+    // Otherwise, split: income txs always keep isPaid = true, expense txs use provided value.
+    if (safeUpdates.type === 'income') {
       safeUpdates.isPaid = true;
     }
 
@@ -482,27 +482,27 @@ const bulkUpdate = async (req, res) => {
       const { updatedCount, balance } = await withTransaction(async (session) => {
         let uCount, oldTransactions, newTransactions;
 
-        if (safeUpdates.type !== 'credito' && safeUpdates.isPaid !== undefined) {
-          // Need to protect existing credito transactions from isPaid = false
+        if (safeUpdates.type !== 'income' && safeUpdates.isPaid !== undefined) {
+          // Need to protect existing income transactions from isPaid = false
           
           const targetTxs = await Transaction.find({ _id: { $in: ids }, userId: req.user.id }).session(session);
-          const creditoIds = targetTxs.filter(tx => tx.type === 'credito').map(tx => tx._id.toString());
-          const debitoIds = targetTxs.filter(tx => tx.type !== 'credito').map(tx => tx._id.toString());
+          const incomeIds = targetTxs.filter(tx => tx.type === 'income').map(tx => tx._id.toString());
+          const expenseIds = targetTxs.filter(tx => tx.type !== 'income').map(tx => tx._id.toString());
 
-          // Update credito transactions with isPaid forced to true
-          const creditoUpdates = { ...safeUpdates, isPaid: true };
-          const creditoResult = creditoIds.length > 0
-            ? await transactionService.bulkUpdateTransactions(req.user.id, creditoIds, creditoUpdates, { session })
+          // Update income transactions with isPaid forced to true
+          const incomeUpdates = { ...safeUpdates, isPaid: true };
+          const incomeResult = incomeIds.length > 0
+            ? await transactionService.bulkUpdateTransactions(req.user.id, incomeIds, incomeUpdates, { session })
             : { updatedCount: 0, oldTransactions: [], newTransactions: [] };
 
-          // Update debito transactions normally
-          const debitoResult = debitoIds.length > 0
-            ? await transactionService.bulkUpdateTransactions(req.user.id, debitoIds, safeUpdates, { session })
+          // Update expense transactions normally
+          const expenseResult = expenseIds.length > 0
+            ? await transactionService.bulkUpdateTransactions(req.user.id, expenseIds, safeUpdates, { session })
             : { updatedCount: 0, oldTransactions: [], newTransactions: [] };
 
-          uCount = creditoResult.updatedCount + debitoResult.updatedCount;
-          oldTransactions = [...creditoResult.oldTransactions, ...debitoResult.oldTransactions];
-          newTransactions = [...creditoResult.newTransactions, ...debitoResult.newTransactions];
+          uCount = incomeResult.updatedCount + expenseResult.updatedCount;
+          oldTransactions = [...incomeResult.oldTransactions, ...expenseResult.oldTransactions];
+          newTransactions = [...incomeResult.newTransactions, ...expenseResult.newTransactions];
         } else {
           const result = await transactionService.bulkUpdateTransactions(req.user.id, ids, safeUpdates, { session });
           uCount = result.updatedCount;
@@ -598,7 +598,7 @@ const update = async (req, res) => {
 
       // Income transactions are always considered paid
       const effectiveType = type || oldTransaction.type;
-      if (effectiveType === 'credito' && !newTx.isPaid) {
+      if (effectiveType === 'income' && !newTx.isPaid) {
         newTx.isPaid = true;
         await newTx.save({ session });
         await newTx.populate('category');

@@ -201,11 +201,11 @@ class TransactionService {
             year: { $year: '$timestamp' },
             month: { $month: '$timestamp' }
           },
-          despesas: {
-            $sum: { $cond: [{ $eq: ['$type', 'debito'] }, '$value', 0] }
+          expenses: {
+            $sum: { $cond: [{ $eq: ['$type', 'expense'] }, '$value', 0] }
           },
-          receitas: {
-            $sum: { $cond: [{ $eq: ['$type', 'credito'] }, '$value', 0] }
+          income: {
+            $sum: { $cond: [{ $eq: ['$type', 'income'] }, '$value', 0] }
           }
         }
       },
@@ -260,7 +260,7 @@ class TransactionService {
       // Upcoming unpaid expenses (next 4, from today onwards)
       Transaction.find({
         userId: objectId,
-        type: 'debito',
+        type: 'expense',
         isPaid: false,
         timestamp: { $gte: today }
       })
@@ -276,7 +276,7 @@ class TransactionService {
     const expensesByCategory = [];
 
     for (const item of categoryBreakdown) {
-      if (item._id.type === 'debito') {
+      if (item._id.type === 'expense') {
         monthlyExpenses += item.total;
         expensesByCategory.push({
           name: item._id.categoryName,

@@ -46,7 +46,7 @@ async function seedDatabase() {
         userId: user._id,
         description: 'Supermercado',
         value: 150.50,
-        type: TRANSACTION_TYPES.DEBIT,
+        type: TRANSACTION_TYPES.EXPENSE,
         category: alimentacao._id,
         timestamp: new Date('2025-10-05')
       },
@@ -54,7 +54,7 @@ async function seedDatabase() {
         userId: user._id,
         description: 'Salário Outubro',
         value: 3500.00,
-        type: TRANSACTION_TYPES.CREDIT,
+        type: TRANSACTION_TYPES.INCOME,
         category: salario._id,
         timestamp: new Date('2025-10-01')
       }
