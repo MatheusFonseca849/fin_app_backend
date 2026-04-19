@@ -1,6 +1,6 @@
 const TRANSACTION_TYPES = Object.freeze({
-  CREDIT: 'credito',
-  DEBIT: 'debito'
+  INCOME: 'income',
+  EXPENSE: 'expense'
 });
 
 const TRANSACTION_TYPE_VALUES = Object.values(TRANSACTION_TYPES);

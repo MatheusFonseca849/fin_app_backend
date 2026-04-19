@@ -192,13 +192,13 @@ class UserService {
 
   /**
    * Compute the signed balance delta for a transaction.
-   * credito adds to balance, debito subtracts.
+   * income adds to balance, expense subtracts.
    * @param {number} value - value in cents (always positive)
-   * @param {string} type - 'credito' or 'debito'
+   * @param {string} type - 'income' or 'expense'
    * @returns {number} signed delta
    */
   getBalanceDelta(value, type) {
-    return type === 'credito' ? value : -value;
+    return type === 'income' ? value : -value;
   }
 
   /**

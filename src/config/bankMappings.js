@@ -10,7 +10,7 @@
  *     - identifier:   (optional) Column name for a unique transaction ID
  *   - keywordTarget:  Which CSV column to match against category keywords
  *   - dateFormat:     How to parse the date string ('DD/MM/YYYY', 'YYYY-MM-DD', etc.)
- *   - valueSigned:    If true, sign of the value determines type (negative = debito, positive = credito)
+ *   - valueSigned:    If true, sign of the value determines type (negative = expense, positive = income)
  *   - separator:      CSV delimiter (default ',')
  */
 

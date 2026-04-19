@@ -62,7 +62,7 @@ describe('Category Endpoints', () => {
       const other = await createAuthenticatedUser({ email: 'other@example.com' });
       await Category.create({
         name: 'Other Category',
-        type: 'debito',
+        type: 'expense',
         color: '#FF0000',
         userId: other.user._id,
       });
@@ -94,13 +94,13 @@ describe('Category Endpoints', () => {
         .set('Origin', ORIGIN)
         .send({
           name: 'Educacao',
-          type: 'debito',
+          type: 'expense',
           color: '#2196F3',
         });
 
       expect(res.status).toBe(201);
       expect(res.body.name).toBe('Educacao');
-      expect(res.body.type).toBe('debito');
+      expect(res.body.type).toBe('expense');
     });
 
     it('should reject category without required fields', async () => {
@@ -118,13 +118,13 @@ describe('Category Endpoints', () => {
         .post('/api/v1/categories')
         .set('Authorization', `Bearer ${token}`)
         .set('Origin', ORIGIN)
-        .send({ name: 'UniqueTest', type: 'debito', color: '#000000' });
+        .send({ name: 'UniqueTest', type: 'expense', color: '#000000' });
 
       const res = await request(app)
         .post('/api/v1/categories')
         .set('Authorization', `Bearer ${token}`)
         .set('Origin', ORIGIN)
-        .send({ name: 'UniqueTest', type: 'debito', color: '#111111' });
+        .send({ name: 'UniqueTest', type: 'expense', color: '#111111' });
 
       expect(res.status).toBe(409);
     });
@@ -136,7 +136,7 @@ describe('Category Endpoints', () => {
         .set('Origin', ORIGIN)
         .send({
           name: 'BadColor',
-          type: 'debito',
+          type: 'expense',
           color: 'red', // not hex
         });
 
@@ -150,7 +150,7 @@ describe('Category Endpoints', () => {
         .set('Origin', ORIGIN)
         .send({
           name: 'Mercado',
-          type: 'debito',
+          type: 'expense',
           color: '#4CAF50',
           keywords: ['supermercado', 'mercado', 'feira'],
         });

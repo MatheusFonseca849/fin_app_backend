@@ -167,13 +167,13 @@ class CsvImportService {
         continue;
       }
 
-      // Determine type from sign if valueSigned, otherwise default to debito
+      // Determine type from sign if valueSigned, otherwise default to expense
       let type, absValue;
       if (mapping.valueSigned) {
-        type = numericValue >= 0 ? 'credito' : 'debito';
+        type = numericValue >= 0 ? 'income' : 'expense';
         absValue = Math.abs(numericValue);
       } else {
-        type = 'debito';
+        type = 'expense';
         absValue = Math.abs(numericValue);
       }
 
