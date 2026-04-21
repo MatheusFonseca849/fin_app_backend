@@ -45,8 +45,6 @@ const getAll = async (req, res) => {
     if (category && !/^[a-f\d]{24}$/i.test(category)) {
       return res.status(400).json(createError(400, 'Categoria inválida'));
     }
-    const hasFilters = type !== undefined || category !== undefined || isRecurrent !== undefined || isPaid !== undefined || paymentMode !== undefined || startDate || endDate || limitNum !== 50;
-
     // Validate date filters when present
     let parsedStartDate, parsedEndDate;
     if (startDate) {
@@ -62,28 +60,28 @@ const getAll = async (req, res) => {
       }
     }
 
-    const cached = await cacheService.getCachedTransactions(req.user.id, pageNum);
-    if (cached && !hasFilters) return res.json(cached);
-
     const options = {
       page: pageNum,
       limit: limitNum,
-      type,
-      category,
-      startDate: parsedStartDate,
-      endDate: parsedEndDate
     };
-    if (isRecurrent !== undefined) {
-      options.isRecurrent = isRecurrent === 'true';
-    }
-    if (isPaid !== undefined) {
-      options.isPaid = isPaid === 'true';
-    }
-    if (paymentMode) {
-      options.paymentMode = paymentMode;
-    }
+    if (type) options.type = type;
+    if (category) options.category = category;
+    if (parsedStartDate) options.startDate = startDate;
+    if (parsedEndDate) options.endDate = endDate;
+    if (isRecurrent !== undefined) options.isRecurrent = isRecurrent === 'true';
+    if (isPaid !== undefined) options.isPaid = isPaid === 'true';
+    if (paymentMode) options.paymentMode = paymentMode;
 
-    const { data, total, page: safePage, limit: safeLimit } = await transactionService.getTransactions(req.user.id, options);
+    // Cache uses a composite key from all filters — works for filtered and unfiltered queries
+    const cached = await cacheService.getCachedTransactions(req.user.id, options);
+    if (cached) return res.json(cached);
+
+    // Pass parsed Date objects to the service (cache key uses the string form)
+    const serviceOptions = { ...options };
+    if (parsedStartDate) serviceOptions.startDate = parsedStartDate;
+    if (parsedEndDate) serviceOptions.endDate = parsedEndDate;
+
+    const { data, total, page: safePage, limit: safeLimit } = await transactionService.getTransactions(req.user.id, serviceOptions);
 
     const response = {
       data,
@@ -95,10 +93,7 @@ const getAll = async (req, res) => {
       }
     };
 
-    if (!hasFilters) {
-      await cacheService.cacheTransactions(req.user.id, pageNum, response);
-    }
-
+    await cacheService.cacheTransactions(req.user.id, options, response);
     res.json(response);
   } catch (error) {
     console.error("Get transactions error:", error);
@@ -513,26 +508,36 @@ const bulkUpdate = async (req, res) => {
         let uCount, oldTransactions, newTransactions;
 
         if (safeUpdates.type !== 'income' && safeUpdates.isPaid !== undefined) {
-          // Need to protect existing income transactions from isPaid = false
-          
+          // Need to protect existing income transactions from isPaid = false.
+          // Single fetch, then two targeted updateMany calls to avoid redundant queries.
           const targetTxs = await Transaction.find({ _id: { $in: ids }, userId: req.user.id }).session(session);
-          const incomeIds = targetTxs.filter(tx => tx.type === 'income').map(tx => tx._id.toString());
-          const expenseIds = targetTxs.filter(tx => tx.type !== 'income').map(tx => tx._id.toString());
+          const incomeTxs = targetTxs.filter(tx => tx.type === 'income');
+          const expenseTxs = targetTxs.filter(tx => tx.type !== 'income');
 
-          // Update income transactions with isPaid forced to true
           const incomeUpdates = { ...safeUpdates, isPaid: true };
-          const incomeResult = incomeIds.length > 0
-            ? await transactionService.bulkUpdateTransactions(req.user.id, incomeIds, incomeUpdates, { session })
-            : { updatedCount: 0, oldTransactions: [], newTransactions: [] };
 
-          // Update expense transactions normally
-          const expenseResult = expenseIds.length > 0
-            ? await transactionService.bulkUpdateTransactions(req.user.id, expenseIds, safeUpdates, { session })
-            : { updatedCount: 0, oldTransactions: [], newTransactions: [] };
+          if (incomeTxs.length > 0) {
+            await Transaction.updateMany(
+              { _id: { $in: incomeTxs.map(tx => tx._id) }, userId: req.user.id },
+              { $set: incomeUpdates },
+              { runValidators: true, session }
+            );
+          }
+          if (expenseTxs.length > 0) {
+            await Transaction.updateMany(
+              { _id: { $in: expenseTxs.map(tx => tx._id) }, userId: req.user.id },
+              { $set: safeUpdates },
+              { runValidators: true, session }
+            );
+          }
 
-          uCount = incomeResult.updatedCount + expenseResult.updatedCount;
-          oldTransactions = [...incomeResult.oldTransactions, ...expenseResult.oldTransactions];
-          newTransactions = [...incomeResult.newTransactions, ...expenseResult.newTransactions];
+          oldTransactions = targetTxs;
+          newTransactions = targetTxs.map(tx => {
+            const obj = tx.toObject();
+            const applied = tx.type === 'income' ? incomeUpdates : safeUpdates;
+            return { ...obj, ...applied };
+          });
+          uCount = targetTxs.length;
         } else {
           const result = await transactionService.bulkUpdateTransactions(req.user.id, ids, safeUpdates, { session });
           uCount = result.updatedCount;
