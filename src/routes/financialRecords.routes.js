@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const transactionController = require("../controllers/transaction.controller");
+const creditCardController = require("../controllers/creditCard.controller");
 const { authenticateToken } = require("../middlewares/auth.middleware");
 const multer = require("multer");
 const { 
@@ -47,6 +48,9 @@ router.post("/bulk-delete", authenticateToken, bulkDeleteValidation, transaction
 
 /** POST /records/bulk-update */
 router.post("/bulk-update", authenticateToken, bulkUpdateValidation, transactionController.bulkUpdate);
+
+/** POST /records/credit-card/recompile */
+router.post("/credit-card/recompile", authenticateToken, creditCardController.recompileFatura);
 
 /** GET /records/:id */
 router.get("/:id", authenticateToken, transactionIdValidation, transactionController.getById);

@@ -130,9 +130,10 @@ class CsvImportService {
    * @param {Function} matchKeyword - Keyword matcher function
    * @param {string} fallbackCategoryId - "Sem Categoria" _id
    * @param {string} fallbackCategoryName - "Sem Categoria" name
-   * @returns {{ rows: Object[], errors: string[] }}
+   * @returns {{ rows: Object[], errors: string[], filteredCount: number }}
    */
   mapRows(records, mapping, matchKeyword, fallbackCategoryId, fallbackCategoryName) {
+    const isCreditCard = !!mapping.creditCard;
     const rows = [];
     const errors = [];
 
@@ -167,9 +168,18 @@ class CsvImportService {
         continue;
       }
 
+      // For credit card imports, filter out negative values (payments received)
+      if (isCreditCard && numericValue <= 0) {
+        continue;
+      }
+
       // Determine type from sign if valueSigned, otherwise default to expense
       let type, absValue;
-      if (mapping.valueSigned) {
+      if (isCreditCard) {
+        // Credit card rows are always expenses
+        type = 'expense';
+        absValue = Math.abs(numericValue);
+      } else if (mapping.valueSigned) {
         type = numericValue >= 0 ? 'income' : 'expense';
         absValue = Math.abs(numericValue);
       } else {
@@ -187,11 +197,12 @@ class CsvImportService {
         value: absValue,
         valueCents: Math.round(absValue * 100),
         type,
+        paymentMode: isCreditCard ? 'credit' : (type === 'expense' ? 'debit' : null),
         categoryId: categoryId || fallbackCategoryId,
         categoryName: categoryName || fallbackCategoryName,
         date: parsedDate.toISOString().split('T')[0],
         timestamp: parsedDate,
-        isPaid: true
+        isPaid: isCreditCard ? false : true
       });
     }
 
@@ -268,7 +279,8 @@ class CsvImportService {
     // Map rows
     const { rows, errors } = this.mapRows(records, mapping, matchKeyword, fallbackId, fallbackName);
 
-    return { rows, errors, headers };
+    const bankLabel = (bankKey !== 'custom' && mapping.label) ? mapping.label : null;
+    return { rows, errors, headers, creditCard: !!mapping.creditCard, bankLabel };
   }
 }
 

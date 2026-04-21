@@ -8,7 +8,7 @@ class TransactionService {
   // Transaction Operations
   // ============================================
 
-  async getTransactions(userId, { page = 1, limit = 50, type, category, isRecurrent, isPaid, startDate, endDate } = {}) {
+  async getTransactions(userId, { page = 1, limit = 50, type, category, isRecurrent, isPaid, paymentMode, startDate, endDate } = {}) {
     const MAX_LIMIT = 200;
     const safePage = Math.max(1, page);
     const safeLimit = Math.min(Math.max(1, limit), MAX_LIMIT);
@@ -18,6 +18,12 @@ class TransactionService {
     if (category) filter.category = category;
     if (isRecurrent !== undefined) filter.isRecurrent = isRecurrent;
     if (isPaid !== undefined) filter.isPaid = isPaid;
+    if (paymentMode === 'debit') {
+      // "debit" includes both explicit 'debit' and null (legacy/income-adjacent expenses)
+      filter.paymentMode = { $in: ['debit', null] };
+    } else if (paymentMode) {
+      filter.paymentMode = paymentMode;
+    }
     if (startDate || endDate) {
       filter.timestamp = {};
       if (startDate) filter.timestamp.$gte = startDate;
@@ -225,13 +231,14 @@ class TransactionService {
     const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
     const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
-    const [categoryBreakdown, upcomingExpenses] = await Promise.all([
-      // Current month paid transactions grouped by category
+    const [categoryBreakdown, creditCardBreakdown, upcomingExpenses] = await Promise.all([
+      // Current month paid debit/income transactions grouped by category
       Transaction.aggregate([
         {
           $match: {
             userId: objectId,
             isPaid: true,
+            paymentMode: { $ne: 'credit' },
             timestamp: { $gte: monthStart, $lte: monthEnd }
           }
         },
@@ -257,11 +264,43 @@ class TransactionService {
         }
       ]),
 
+      // Current month credit card expenses grouped by category
+      Transaction.aggregate([
+        {
+          $match: {
+            userId: objectId,
+            type: 'expense',
+            paymentMode: 'credit',
+            timestamp: { $gte: monthStart, $lte: monthEnd }
+          }
+        },
+        {
+          $lookup: {
+            from: 'categories',
+            localField: 'category',
+            foreignField: '_id',
+            as: 'cat'
+          }
+        },
+        { $unwind: { path: '$cat', preserveNullAndEmptyArrays: true } },
+        {
+          $group: {
+            _id: {
+              categoryId: '$cat._id',
+              categoryName: { $ifNull: ['$cat.name', 'Sem Categoria'] },
+              categoryColor: { $ifNull: ['$cat.color', '#757575'] }
+            },
+            total: { $sum: '$value' }
+          }
+        }
+      ]),
+
       // Upcoming unpaid expenses (next 4, from today onwards)
       Transaction.find({
         userId: objectId,
         type: 'expense',
         isPaid: false,
+        paymentMode: { $ne: 'credit' },
         timestamp: { $gte: today }
       })
         .populate('category')
@@ -270,14 +309,14 @@ class TransactionService {
         .lean()
     ]);
 
-    // Process aggregation into structured response
-    let monthlyExpenses = 0;
+    // Process debit/income aggregation
+    let monthlyDebitExpenses = 0;
     let monthlyIncome = 0;
     const expensesByCategory = [];
 
     for (const item of categoryBreakdown) {
       if (item._id.type === 'expense') {
-        monthlyExpenses += item.total;
+        monthlyDebitExpenses += item.total;
         expensesByCategory.push({
           name: item._id.categoryName,
           color: item._id.categoryColor,
@@ -288,11 +327,29 @@ class TransactionService {
       }
     }
 
+    // Process credit card aggregation
+    let monthlyCreditCardTotal = 0;
+    const creditCardByCategory = [];
+
+    for (const item of creditCardBreakdown) {
+      monthlyCreditCardTotal += item.total;
+      creditCardByCategory.push({
+        name: item._id.categoryName,
+        color: item._id.categoryColor,
+        value: item.total
+      });
+    }
+
+    const monthlyExpensesTotal = monthlyDebitExpenses + monthlyCreditCardTotal;
+
     return {
-      monthlyExpenses,
+      monthlyDebitExpenses,
+      monthlyCreditCardTotal,
+      monthlyExpensesTotal,
       monthlyIncome,
-      monthlyBalance: monthlyIncome - monthlyExpenses,
+      monthlyBalance: monthlyIncome - monthlyExpensesTotal,
       expensesByCategory,
+      creditCardByCategory,
       upcomingExpenses
     };
   }
