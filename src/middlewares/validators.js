@@ -1,5 +1,6 @@
 const { body, param, validationResult } = require('express-validator');
 const { TRANSACTION_TYPE_VALUES } = require('../constants/transactionTypes');
+const { PAYMENT_MODE_VALUES } = require('../constants/paymentModes');
 const createError = require('./createError');
 
 // Reusable error handler
@@ -95,6 +96,14 @@ const updateUserValidation = [
     .optional()
     .isBoolean().withMessage('allowForeignCurrency deve ser verdadeiro ou falso'),
 
+  body('preferences.creditCardClosingDay')
+    .optional()
+    .isInt({ min: 1, max: 31 }).withMessage('Dia de fechamento deve ser entre 1 e 31'),
+
+  body('preferences.creditCardDueDay')
+    .optional()
+    .isInt({ min: 1, max: 31 }).withMessage('Dia de vencimento deve ser entre 1 e 31'),
+
   body('currentPassword')
     .if(body('password').exists())
     .notEmpty().withMessage('Senha atual é obrigatória para alterar a senha'),
@@ -151,6 +160,10 @@ const createTransactionValidation = [
     .optional()
     .isBoolean().withMessage('Pago deve ser verdadeiro ou falso'),
 
+  body('paymentMode')
+    .optional({ nullable: true })
+    .isIn(PAYMENT_MODE_VALUES).withMessage('Modo de pagamento deve ser "debit" ou "credit"'),
+
   body('date')
     .notEmpty().withMessage('Data é obrigatória')
     .isISO8601({ strict: true, strictSeparator: true }).withMessage('Data deve estar no formato ISO 8601 (YYYY-MM-DD ou YYYY-MM-DDTHH:mm:ss)'),
@@ -196,6 +209,10 @@ const updateTransactionValidation = [
   body('isPaid')
     .optional()
     .isBoolean().withMessage('isPaid deve ser verdadeiro ou falso'),
+
+  body('paymentMode')
+    .optional({ nullable: true })
+    .isIn([...PAYMENT_MODE_VALUES, null]).withMessage('Modo de pagamento deve ser "debit", "credit" ou null'),
 
   body('date')
     .optional()
@@ -445,6 +462,10 @@ const bulkUpdateValidation = [
     .optional()
     .isBoolean().withMessage('isPaid deve ser verdadeiro ou falso'),
 
+  body('updates.paymentMode')
+    .optional({ nullable: true })
+    .isIn([...PAYMENT_MODE_VALUES, null]).withMessage('Modo de pagamento deve ser "debit", "credit" ou null'),
+
   body('updates.isRecurrent')
     .optional()
     .isBoolean().withMessage('isRecurrent deve ser verdadeiro ou falso'),
@@ -483,6 +504,15 @@ const importConfirmValidation = [
   body('transactions.*.isPaid')
     .optional()
     .isBoolean().withMessage('isPaid deve ser verdadeiro ou falso'),
+
+  body('transactions.*.paymentMode')
+    .optional({ nullable: true })
+    .isIn(PAYMENT_MODE_VALUES).withMessage('Modo de pagamento deve ser "debit" ou "credit"'),
+
+  body('transactions.*.source')
+    .optional({ nullable: true })
+    .isString().withMessage('Fonte deve ser uma string')
+    .isLength({ max: 100 }).withMessage('Fonte muito longa'),
 
   handleValidationErrors
 ];

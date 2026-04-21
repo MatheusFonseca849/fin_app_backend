@@ -46,6 +46,8 @@ class RecurrenceService {
   async processSingleRecurrence(recurrent, now) {
     return withTransaction(async (session) => {
       const isPaid = recurrent.type === 'income';
+      // Propagate paymentMode from the recurrent template
+      const paymentMode = recurrent.type === 'income' ? null : (recurrent.paymentMode || 'debit');
 
       // 1. Insert the new transaction entry
       const [created] = await Transaction.create([{
@@ -53,9 +55,10 @@ class RecurrenceService {
         description: recurrent.description,
         value: recurrent.value,
         type: recurrent.type,
+        paymentMode,
         category: recurrent.category,
         isRecurrent: false,
-        isPaid,
+        isPaid: paymentMode === 'credit' ? false : isPaid,
         timestamp: now
       }], { session });
 
@@ -66,8 +69,8 @@ class RecurrenceService {
         { session }
       );
 
-      // 3. Adjust balance for auto-paid transactions (income)
-      if (isPaid) {
+      // 3. Adjust balance for auto-paid transactions (income only; credit card never)
+      if (isPaid && paymentMode !== 'credit') {
         const delta = userService.getBalanceDelta(created.value, created.type);
         await userService.adjustBalance(recurrent.userId.toString(), delta, { session });
       }
