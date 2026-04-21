@@ -221,7 +221,7 @@ class TransactionService {
 
   /**
    * Returns current-month summary (expenses by category, totals) and upcoming unpaid expenses.
-   * Single aggregation + one query — replaces the need for the frontend to fetch ALL transactions.
+   * Single $facet aggregation — one index scan feeds three sub-pipelines.
    */
   async getDashboardData(userId) {
     const objectId = mongoose.Types.ObjectId.createFromHexString(userId);
@@ -231,83 +231,110 @@ class TransactionService {
     const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
     const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
-    const [categoryBreakdown, creditCardBreakdown, upcomingExpenses] = await Promise.all([
-      // Current month paid debit/income transactions grouped by category
-      Transaction.aggregate([
-        {
-          $match: {
-            userId: objectId,
-            isPaid: true,
-            paymentMode: { $ne: 'credit' },
-            timestamp: { $gte: monthStart, $lte: monthEnd }
-          }
-        },
-        {
-          $lookup: {
-            from: 'categories',
-            localField: 'category',
-            foreignField: '_id',
-            as: 'cat'
-          }
-        },
-        { $unwind: { path: '$cat', preserveNullAndEmptyArrays: true } },
-        {
-          $group: {
-            _id: {
-              type: '$type',
-              categoryId: '$cat._id',
-              categoryName: { $ifNull: ['$cat.name', 'Sem Categoria'] },
-              categoryColor: { $ifNull: ['$cat.color', '#757575'] }
-            },
-            total: { $sum: '$value' }
-          }
+    // Single $facet aggregation replaces 3 parallel queries.
+    // One index scan on { userId, timestamp } feeds all three sub-pipelines.
+    const [result] = await Transaction.aggregate([
+      {
+        $match: {
+          userId: objectId,
+          timestamp: { $gte: monthStart }
         }
-      ]),
-
-      // Current month credit card expenses grouped by category
-      Transaction.aggregate([
-        {
-          $match: {
-            userId: objectId,
-            type: 'expense',
-            paymentMode: 'credit',
-            timestamp: { $gte: monthStart, $lte: monthEnd }
-          }
-        },
-        {
-          $lookup: {
-            from: 'categories',
-            localField: 'category',
-            foreignField: '_id',
-            as: 'cat'
-          }
-        },
-        { $unwind: { path: '$cat', preserveNullAndEmptyArrays: true } },
-        {
-          $group: {
-            _id: {
-              categoryId: '$cat._id',
-              categoryName: { $ifNull: ['$cat.name', 'Sem Categoria'] },
-              categoryColor: { $ifNull: ['$cat.color', '#757575'] }
+      },
+      {
+        $facet: {
+          // Current month paid debit/income transactions grouped by category
+          categoryBreakdown: [
+            {
+              $match: {
+                isPaid: true,
+                paymentMode: { $ne: 'credit' },
+                timestamp: { $lte: monthEnd }
+              }
             },
-            total: { $sum: '$value' }
-          }
-        }
-      ]),
+            {
+              $lookup: {
+                from: 'categories',
+                localField: 'category',
+                foreignField: '_id',
+                as: 'cat'
+              }
+            },
+            { $unwind: { path: '$cat', preserveNullAndEmptyArrays: true } },
+            {
+              $group: {
+                _id: {
+                  type: '$type',
+                  categoryId: '$cat._id',
+                  categoryName: { $ifNull: ['$cat.name', 'Sem Categoria'] },
+                  categoryColor: { $ifNull: ['$cat.color', '#757575'] }
+                },
+                total: { $sum: '$value' }
+              }
+            }
+          ],
 
-      // Upcoming unpaid expenses (next 4, from today onwards)
-      Transaction.find({
-        userId: objectId,
-        type: 'expense',
-        isPaid: false,
-        paymentMode: { $ne: 'credit' },
-        timestamp: { $gte: today }
-      })
-        .populate('category')
-        .sort({ timestamp: 1 })
-        .limit(4)
-        .lean()
+          // Current month credit card expenses grouped by category
+          creditCardBreakdown: [
+            {
+              $match: {
+                type: 'expense',
+                paymentMode: 'credit',
+                timestamp: { $lte: monthEnd }
+              }
+            },
+            {
+              $lookup: {
+                from: 'categories',
+                localField: 'category',
+                foreignField: '_id',
+                as: 'cat'
+              }
+            },
+            { $unwind: { path: '$cat', preserveNullAndEmptyArrays: true } },
+            {
+              $group: {
+                _id: {
+                  categoryId: '$cat._id',
+                  categoryName: { $ifNull: ['$cat.name', 'Sem Categoria'] },
+                  categoryColor: { $ifNull: ['$cat.color', '#757575'] }
+                },
+                total: { $sum: '$value' }
+              }
+            }
+          ],
+
+          // Upcoming unpaid expenses (next 4, from today onwards)
+          upcomingExpenses: [
+            {
+              $match: {
+                type: 'expense',
+                isPaid: false,
+                paymentMode: { $ne: 'credit' },
+                timestamp: { $gte: today }
+              }
+            },
+            { $sort: { timestamp: 1 } },
+            { $limit: 4 },
+            {
+              $lookup: {
+                from: 'categories',
+                localField: 'category',
+                foreignField: '_id',
+                as: 'categoryDoc'
+              }
+            },
+            {
+              $addFields: {
+                category: { $arrayElemAt: ['$categoryDoc', 0] }
+              }
+            },
+            { $project: { categoryDoc: 0 } }
+          ]
+        }
+      }
     ]);
+
+    const { categoryBreakdown, creditCardBreakdown, upcomingExpenses } = result;
 
     // Process debit/income aggregation
     let monthlyDebitExpenses = 0;
@@ -391,8 +418,15 @@ class TransactionService {
       { runValidators: true, session }
     );
 
-    const newTransactions = await Transaction.find({ _id: { $in: updateIds } }).session(session).populate('category');
-    return { updatedCount: newTransactions.length, oldTransactions: toUpdate, newTransactions };
+    // Compute new state in memory instead of a third DB round-trip.
+    // Only primitive fields (isPaid, paymentMode, value, type) are needed
+    // by the caller for balance delta calculation.
+    const newTransactions = toUpdate.map(tx => {
+      const obj = tx.toObject();
+      return { ...obj, ...updates };
+    });
+
+    return { updatedCount: toUpdate.length, oldTransactions: toUpdate, newTransactions };
   }
 }
 
