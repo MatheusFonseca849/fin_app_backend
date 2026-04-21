@@ -4,6 +4,7 @@ const categoryService = require('../services/category.service');
 const csvImportService = require('../services/csvImport.service');
 const createError = require('../middlewares/createError');
 const { TRANSACTION_TYPE_VALUES } = require('../constants/transactionTypes');
+const { PAYMENT_MODE_VALUES } = require('../constants/paymentModes');
 const { BANK_MAPPINGS } = require('../config/bankMappings');
 const cacheService = require('../services/cache.service');
 const { acquireLock } = require('../utils/lock.utils');
@@ -32,6 +33,17 @@ const getAll = async (req, res) => {
     const limitNum = limit ? parseInt(limit) : 50;
     if (isNaN(pageNum) || isNaN(limitNum)) {
       return res.status(400).json(createError(400, 'page e limit devem ser números válidos'));
+    }
+
+    // Validate query params against allowed values to prevent NoSQL injection
+    if (type && !TRANSACTION_TYPE_VALUES.includes(type)) {
+      return res.status(400).json(createError(400, 'Tipo inválido'));
+    }
+    if (paymentMode && !PAYMENT_MODE_VALUES.includes(paymentMode)) {
+      return res.status(400).json(createError(400, 'Modo de pagamento inválido'));
+    }
+    if (category && !/^[a-f\d]{24}$/i.test(category)) {
+      return res.status(400).json(createError(400, 'Categoria inválida'));
     }
     const hasFilters = type !== undefined || category !== undefined || isRecurrent !== undefined || isPaid !== undefined || paymentMode !== undefined || startDate || endDate || limitNum !== 50;
 
@@ -127,9 +139,12 @@ const getMonthlySummary = async (req, res) => {
     const opts = {};
     const hasMonthsFilter = months !== undefined;
     if (hasMonthsFilter) {
+      if (typeof months !== 'string') {
+        return res.status(400).json(createError(400, 'months deve ser um número válido entre 1 e 24'));
+      }
       opts.months = parseInt(months);
-      if (isNaN(opts.months) || opts.months < 1) {
-        return res.status(400).json(createError(400, 'months deve ser um número válido maior que 0'));
+      if (isNaN(opts.months) || opts.months < 1 || opts.months > 24) {
+        return res.status(400).json(createError(400, 'months deve ser um número válido entre 1 e 24'));
       }
     }
 
@@ -262,7 +277,7 @@ const importPreview = async (req, res) => {
       return res.status(error.statusCode).json(createError(error.statusCode, error.message));
     }
     console.error("Import preview error:", error);
-    res.status(400).json(createError(400, "Erro ao processar CSV"));
+    res.status(500).json(createError(500, "Erro ao processar CSV"));
   }
 };
 

@@ -8,6 +8,14 @@ const cacheService = require('./cache.service');
 const { acquireLock } = require('../utils/lock.utils');
 const { withTransaction } = require('../utils/withTransaction');
 
+/**
+ * Escape special regex metacharacters in a string so it can be
+ * safely interpolated into a RegExp / MongoDB $regex pattern.
+ */
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 const MONTH_NAMES_PT = [
   'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
@@ -193,7 +201,7 @@ class CreditCardService {
       // Find and delete all existing faturas for this month (any bank)
       const existingFaturas = await Transaction.find({
         userId: objectId,
-        description: { $regex: `^${faturaPrefix}` },
+        description: { $regex: `^${escapeRegex(faturaPrefix)}` },
         paymentMode: 'debit',
         isRecurrent: false
       }).session(session);
