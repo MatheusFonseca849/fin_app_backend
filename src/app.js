@@ -84,7 +84,7 @@ app.use('/api/v1/users/register', authLimiter);
 app.use('/api/v1/users/forgot-password', authLimiter);
 app.use('/api/v1/users/reset-password', authLimiter);
 app.use('/api/v1/users/verify-email-change', authLimiter);
-app.use('/api/v1/users/refresh', apiLimiter);
+app.use('/api/v1/users/refresh', authLimiter);
 
 // Apply strict rate limiting to email-sending endpoints
 app.use('/api/v1/users/forgot-password', emailLimiter);
