@@ -3,22 +3,22 @@ const createError = require('../middlewares/createError');
 
 const recompileFatura = async (req, res) => {
   try {
-    const { fatura, deletedOldFatura } = await creditCardService.recompileFatura(req.user.id);
+    const { faturas, deletedCount } = await creditCardService.recompileFatura(req.user.id);
 
-    if (!fatura) {
+    if (!faturas) {
       return res.json({
         message: 'Nenhuma despesa no cartão de crédito para compilar.',
-        fatura: null,
-        deletedOldFatura
+        faturas: null,
+        deletedCount
       });
     }
 
     res.json({
-      message: deletedOldFatura
+      message: deletedCount > 0
         ? 'Fatura recompilada com sucesso.'
         : 'Fatura gerada com sucesso.',
-      fatura,
-      deletedOldFatura
+      faturas,
+      deletedCount
     });
   } catch (error) {
     console.error('Recompile fatura error:', error);

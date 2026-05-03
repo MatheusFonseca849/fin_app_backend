@@ -2,6 +2,8 @@ const Category = require('../models/schemas/category.schema');
 const { TRANSACTION_TYPES } = require('../constants/transactionTypes');
 const AppError = require('../utils/AppError');
 
+const MAX_CATEGORIES_PER_USER = 150;
+
 class CategoryService {
 
   // ============================================
@@ -9,7 +11,7 @@ class CategoryService {
   // ============================================
 
   async getCategories(userId) {
-    return await Category.find({ userId }).sort({ type: 1, name: 1 });
+    return await Category.find({ userId }).sort({ type: 1, name: 1 }).limit(MAX_CATEGORIES_PER_USER);
   }
 
   async getCategoryById(userId, categoryId) {
@@ -23,6 +25,11 @@ class CategoryService {
   async addCategory(userId, data) {
     const exists = await Category.findOne({ userId, name: data.name });
     if (exists) throw new AppError(409, 'Categoria já existe');
+
+    const count = await Category.countDocuments({ userId });
+    if (count >= MAX_CATEGORIES_PER_USER) {
+      throw new AppError(400, `Limite de ${MAX_CATEGORIES_PER_USER} categorias atingido`);
+    }
 
     const category = new Category({ ...data, userId });
     return await category.save();

@@ -61,19 +61,17 @@ class CreditCardService {
     const today = new Date();
     const currentDay = today.getDate();
 
-    // Find users whose closing day is today
-    const users = await User.find({
+    // Cursor-based iteration — streams users one at a time instead of
+    // loading all matching users into memory at once (SCALE-2).
+    const cursor = User.find({
       'preferences.creditCardClosingDay': currentDay
-    }).lean();
-
-    if (users.length === 0) {
-      console.log('✅ [CreditCard] No users with closing day today.');
-      return 0;
-    }
+    }).lean().cursor();
 
     let successCount = 0;
+    let totalCount = 0;
 
-    for (const user of users) {
+    for await (const user of cursor) {
+      totalCount++;
       try {
         await this.generateFatura(user._id.toString(), user.preferences);
         successCount++;
@@ -82,105 +80,150 @@ class CreditCardService {
       }
     }
 
-    console.log(`✅ [CreditCard] Done. Generated ${successCount} fatura(s) for ${users.length} user(s).`);
+    if (totalCount === 0) {
+      console.log('✅ [CreditCard] No users with closing day today.');
+      return 0;
+    }
+
+    console.log(`✅ [CreditCard] Done. Generated ${successCount} fatura(s) for ${totalCount} user(s).`);
     return successCount;
   }
 
   /**
-   * Generate Fatura transactions for a user.
-   * Groups all uncompiled credit card expenses by source (bank) and creates
-   * one "Fatura - {Month} {Year} - {Bank}" transaction per source.
+   * Determine which billing cycle an expense belongs to.
+   * If the expense date is after the closing day, it rolls into the next month's cycle.
+   * Returns a { month, year } object representing the fatura's label month.
+   */
+  _getCycleKey(timestamp, closingDay) {
+    const d = new Date(timestamp);
+    let month = d.getUTCMonth();
+    let year = d.getUTCFullYear();
+    if (d.getUTCDate() > closingDay) {
+      month++;
+      if (month > 11) { month = 0; year++; }
+    }
+    return `${year}-${month}`;
+  }
+
+  /**
+   * Core fatura creation logic. Streams unpaid CC expenses, buckets them
+   * by billing cycle + source, and creates one fatura per bucket.
+   * Must be called within an existing MongoDB transaction.
    *
    * @param {string} userId
-   * @param {Object} preferences - User preferences (creditCardClosingDay, creditCardDueDay)
-   * @returns {Object[]|null} The created fatura transactions, or null if nothing to compile
+   * @param {Object} preferences
+   * @param {import('mongoose').ClientSession} session
+   * @returns {Object[]|null}
    */
-  async generateFatura(userId, preferences) {
+  async _createFaturas(userId, preferences, session) {
     const objectId = mongoose.Types.ObjectId.createFromHexString(userId);
     const dueDay = preferences?.creditCardDueDay || 1;
+    const closingDay = preferences?.creditCardClosingDay || 1;
 
-    // Find all credit card expenses not yet compiled into a fatura
-    const ccExpenses = await Transaction.find({
+    // Stream all unpaid CC expenses via cursor to avoid loading
+    // months of backlog into memory at once (SCALE-5).
+    const query = Transaction.find({
       userId: objectId,
       type: 'expense',
       paymentMode: 'credit',
       isRecurrent: false,
       isPaid: false
     }).lean();
+    if (session) query.session(session);
+    const cursor = query.cursor();
 
-    if (ccExpenses.length === 0) {
+    // Bucket by cycle+source. Only IDs and values are kept — not full docs.
+    // Key: "year-month|source"
+    const buckets = {};
+    let totalCount = 0;
+
+    for await (const tx of cursor) {
+      totalCount++;
+      const cycleKey = this._getCycleKey(tx.timestamp, closingDay);
+      const source = tx.source || 'Cartão';
+      const key = `${cycleKey}|${source}`;
+
+      if (!buckets[key]) {
+        buckets[key] = { cycleKey, source, ids: [], totalCents: 0 };
+      }
+      buckets[key].ids.push(tx._id);
+      buckets[key].totalCents += tx.value;
+    }
+
+    if (totalCount === 0) {
       return null;
     }
 
-    // Group by source (bank)
-    const groups = {};
-    for (const tx of ccExpenses) {
-      const key = tx.source || 'Cartão';
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(tx);
-    }
-
-    // Determine fatura month label based on current date
-    const now = new Date();
-    const monthName = MONTH_NAMES_PT[now.getMonth()];
-    const year = now.getFullYear();
-
-    // Calculate vencimento date
-    const vencimento = new Date(Date.UTC(now.getFullYear(), now.getMonth(), dueDay));
-    const closingDay = preferences?.creditCardClosingDay || 1;
-    if (dueDay <= closingDay) {
-      vencimento.setUTCMonth(vencimento.getUTCMonth() + 1);
-    }
-
     // Get "Sem Categoria" as fallback for the fatura
-    const semCategoria = await categoryService.ensureSemCategoria(userId);
+    const semCategoria = await categoryService.ensureSemCategoria(userId, { session });
+    const created = [];
 
-    const faturas = await withTransaction(async (session) => {
-      const created = [];
+    for (const bucket of Object.values(buckets)) {
+      const [yearStr, monthStr] = bucket.cycleKey.split('-');
+      const cycleMonth = parseInt(monthStr, 10);
+      const cycleYear = parseInt(yearStr, 10);
 
-      for (const [source, expenses] of Object.entries(groups)) {
-        const totalCents = expenses.reduce((sum, tx) => sum + tx.value, 0);
-        const faturaDescription = `Fatura - ${monthName} ${year} - ${source}`;
+      const monthName = MONTH_NAMES_PT[cycleMonth];
+      const faturaDescription = `Fatura - ${monthName} ${cycleYear} - ${bucket.source}`;
 
-        // Mark compiled CC expenses as paid
-        const expenseIds = expenses.map(tx => tx._id);
-        await Transaction.updateMany(
-          { _id: { $in: expenseIds } },
-          { $set: { isPaid: true } },
-          { session }
-        );
-
-        // Create the fatura transaction as a debit expense
-        const [fatura] = await Transaction.create([{
-          userId: objectId,
-          description: faturaDescription,
-          value: totalCents,
-          type: 'expense',
-          paymentMode: 'debit',
-          category: semCategoria._id,
-          isRecurrent: false,
-          isPaid: false,
-          timestamp: vencimento
-        }], { session });
-
-        created.push(fatura);
-        console.log(`💳 [CreditCard] Generated fatura for user ${userId}: ${faturaDescription} = ${totalCents} cents`);
+      // Calculate vencimento for this specific cycle
+      const vencimento = new Date(Date.UTC(cycleYear, cycleMonth, dueDay));
+      if (dueDay <= closingDay) {
+        vencimento.setUTCMonth(vencimento.getUTCMonth() + 1);
       }
 
-      return created;
+      // Mark compiled CC expenses as paid
+      await Transaction.updateMany(
+        { _id: { $in: bucket.ids } },
+        { $set: { isPaid: true } },
+        { session }
+      );
+
+      // Create the fatura transaction as a debit expense
+      const [fatura] = await Transaction.create([{
+        userId: objectId,
+        description: faturaDescription,
+        value: bucket.totalCents,
+        type: 'expense',
+        paymentMode: 'debit',
+        category: semCategoria._id,
+        isRecurrent: false,
+        isPaid: false,
+        timestamp: vencimento
+      }], { session });
+
+      created.push(fatura);
+      console.log(`💳 [CreditCard] Generated fatura for user ${userId}: ${faturaDescription} = ${bucket.totalCents} cents`);
+    }
+
+    return created;
+  }
+
+  /**
+   * Generate Fatura transactions for a user.
+   * Wraps _createFaturas in a transaction and invalidates caches.
+   *
+   * @param {string} userId
+   * @param {Object} preferences - User preferences (creditCardClosingDay, creditCardDueDay)
+   * @returns {Object[]|null} The created fatura transactions, or null if nothing to compile
+   */
+  async generateFatura(userId, preferences) {
+    const faturas = await withTransaction(async (session) => {
+      return await this._createFaturas(userId, preferences, session);
     });
 
-    // Invalidate caches
-    await cacheService.invalidateTransactions(userId);
-    await cacheService.invalidateUser(userId);
+    if (faturas) {
+      await cacheService.invalidateTransactions(userId);
+      await cacheService.invalidateUser(userId);
+    }
 
     return faturas;
   }
 
   /**
    * Manually recompile a user's credit card faturas.
-   * Deletes existing faturas for the current month (matching "Fatura - {Month} {Year}"),
-   * then regenerates them grouped by bank source.
+   * Atomically deletes ALL existing faturas, un-marks their source CC
+   * expenses, and regenerates faturas grouped by billing cycle + bank source.
    *
    * @param {string} userId
    * @returns {Object} { faturas, deletedCount }
@@ -190,18 +233,13 @@ class CreditCardService {
     const user = await userService.findById(userId);
     const preferences = user.preferences;
 
-    const now = new Date();
-    const monthName = MONTH_NAMES_PT[now.getMonth()];
-    const year = now.getFullYear();
-    const faturaPrefix = `Fatura - ${monthName} ${year}`;
-
     let deletedCount = 0;
 
-    await withTransaction(async (session) => {
-      // Find and delete all existing faturas for this month (any bank)
+    const faturas = await withTransaction(async (session) => {
+      // 1. Delete ALL existing faturas (any month), reversing balance effects
       const existingFaturas = await Transaction.find({
         userId: objectId,
-        description: { $regex: `^${escapeRegex(faturaPrefix)}` },
+        description: { $regex: `^${escapeRegex('Fatura - ')}` },
         paymentMode: 'debit',
         isRecurrent: false
       }).session(session);
@@ -215,7 +253,7 @@ class CreditCardService {
         deletedCount++;
       }
 
-      // Un-mark all CC expenses that were compiled
+      // 2. Un-mark ALL CC expenses as unpaid
       await Transaction.updateMany(
         {
           userId: objectId,
@@ -227,10 +265,14 @@ class CreditCardService {
         { $set: { isPaid: false } },
         { session }
       );
+
+      // 3. Re-create all faturas from scratch (within same transaction)
+      return await this._createFaturas(userId, preferences, session);
     });
 
-    // Now regenerate the faturas (grouped by source)
-    const faturas = await this.generateFatura(userId, preferences);
+    // Invalidate caches
+    await cacheService.invalidateTransactions(userId);
+    await cacheService.invalidateUser(userId);
 
     return { faturas, deletedCount };
   }

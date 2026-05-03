@@ -1049,5 +1049,124 @@ describe('Transaction Endpoints', () => {
 
       expect(res.status).toBe(401);
     });
+
+    it('should accept months up to 120', async () => {
+      const res = await request(app)
+        .get('/api/v1/records/monthly-summary?months=120')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(200);
+    });
+
+    it('should reject months exceeding 120', async () => {
+      const res = await request(app)
+        .get('/api/v1/records/monthly-summary?months=121')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(400);
+    });
+  });
+
+  // ============================================
+  // Regression: Validation Fixes
+  // ============================================
+  describe('Validation Regression Tests', () => {
+    it('should reject transaction without category (BUG-B2)', async () => {
+      const res = await request(app)
+        .post('/api/v1/records')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', ORIGIN)
+        .send({
+          description: 'No category',
+          value: 10.00,
+          type: 'expense',
+          date: new Date().toISOString(),
+        });
+
+      expect(res.status).toBe(400);
+      const fields = res.body.error?.details?.map(d => d.field) || [];
+      expect(fields).toContain('category');
+    });
+
+    it('should reject isRecurrent=true without billingDay (LOGIC-3)', async () => {
+      const res = await request(app)
+        .post('/api/v1/records')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', ORIGIN)
+        .send({
+          description: 'Recurrent no billing',
+          value: 50.00,
+          type: 'expense',
+          category: debitCategory._id.toString(),
+          isRecurrent: true,
+          date: new Date().toISOString(),
+        });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should accept isRecurrent=true with billingDay', async () => {
+      const res = await request(app)
+        .post('/api/v1/records')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', ORIGIN)
+        .send({
+          description: 'Recurrent with billing',
+          value: 50.00,
+          type: 'expense',
+          category: debitCategory._id.toString(),
+          isRecurrent: true,
+          billingDay: 15,
+          date: new Date().toISOString(),
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.transaction.isRecurrent).toBe(true);
+      expect(res.body.transaction.billingDay).toBe(15);
+    });
+
+    it('should include same-day transactions when filtering by endDate (LOGIC-2)', async () => {
+      const targetDate = new Date(Date.UTC(2025, 5, 15, 14, 30, 0));
+
+      await Transaction.create({
+        userId: authUser._id,
+        description: 'Afternoon tx',
+        value: 1000,
+        type: 'expense',
+        category: debitCategory._id,
+        isPaid: true,
+        timestamp: targetDate,
+      });
+
+      const res = await request(app)
+        .get('/api/v1/records?endDate=2025-06-15')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.length).toBe(1);
+      expect(res.body.data[0].description).toBe('Afternoon tx');
+    });
+
+    it('should include same-day transactions in calendar endDate (LOGIC-2)', async () => {
+      const targetDate = new Date(Date.UTC(2025, 5, 15, 18, 0, 0));
+
+      await Transaction.create({
+        userId: authUser._id,
+        description: 'Evening calendar tx',
+        value: 2000,
+        type: 'expense',
+        category: debitCategory._id,
+        isPaid: true,
+        timestamp: targetDate,
+      });
+
+      const res = await request(app)
+        .get('/api/v1/records/calendar?startDate=2025-06-01&endDate=2025-06-15')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.length).toBe(1);
+      expect(res.body.data[0].description).toBe('Evening calendar tx');
+    });
   });
 });
