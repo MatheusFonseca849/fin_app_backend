@@ -4,6 +4,7 @@ const categoryService = require('../services/category.service');
 const csvImportService = require('../services/csvImport.service');
 const createError = require('../middlewares/createError');
 const { TRANSACTION_TYPE_VALUES } = require('../constants/transactionTypes');
+const { PAYMENT_MODE_VALUES } = require('../constants/paymentModes');
 const { BANK_MAPPINGS } = require('../config/bankMappings');
 const cacheService = require('../services/cache.service');
 const { acquireLock } = require('../utils/lock.utils');
@@ -27,14 +28,23 @@ const parseStrictDate = (str) => {
 
 const getAll = async (req, res) => {
   try {
-    const { page, limit, type, category, isRecurrent, isPaid, startDate, endDate } = req.query;
-    const pageNum = page ? parseInt(page) : 1;
-    const limitNum = limit ? parseInt(limit) : 50;
+    const { page, limit, type, category, isRecurrent, isPaid, paymentMode, startDate, endDate } = req.query;
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 50));
     if (isNaN(pageNum) || isNaN(limitNum)) {
       return res.status(400).json(createError(400, 'page e limit devem ser números válidos'));
     }
-    const hasFilters = type !== undefined || category !== undefined || isRecurrent !== undefined || isPaid !== undefined || startDate || endDate || limitNum !== 50;
 
+    // Validate query params against allowed values to prevent NoSQL injection
+    if (type && !TRANSACTION_TYPE_VALUES.includes(type)) {
+      return res.status(400).json(createError(400, 'Tipo inválido'));
+    }
+    if (paymentMode && !PAYMENT_MODE_VALUES.includes(paymentMode)) {
+      return res.status(400).json(createError(400, 'Modo de pagamento inválido'));
+    }
+    if (category && !/^[a-f\d]{24}$/i.test(category)) {
+      return res.status(400).json(createError(400, 'Categoria inválida'));
+    }
     // Validate date filters when present
     let parsedStartDate, parsedEndDate;
     if (startDate) {
@@ -50,25 +60,28 @@ const getAll = async (req, res) => {
       }
     }
 
-    const cached = await cacheService.getCachedTransactions(req.user.id, pageNum);
-    if (cached && !hasFilters) return res.json(cached);
-
     const options = {
       page: pageNum,
       limit: limitNum,
-      type,
-      category,
-      startDate: parsedStartDate,
-      endDate: parsedEndDate
     };
-    if (isRecurrent !== undefined) {
-      options.isRecurrent = isRecurrent === 'true';
-    }
-    if (isPaid !== undefined) {
-      options.isPaid = isPaid === 'true';
-    }
+    if (type) options.type = type;
+    if (category) options.category = category;
+    if (parsedStartDate) options.startDate = startDate;
+    if (parsedEndDate) options.endDate = endDate;
+    if (isRecurrent !== undefined) options.isRecurrent = isRecurrent === 'true';
+    if (isPaid !== undefined) options.isPaid = isPaid === 'true';
+    if (paymentMode) options.paymentMode = paymentMode;
 
-    const { data, total, page: safePage, limit: safeLimit } = await transactionService.getTransactions(req.user.id, options);
+    // Cache uses a composite key from all filters — works for filtered and unfiltered queries
+    const cached = await cacheService.getCachedTransactions(req.user.id, options);
+    if (cached) return res.json(cached);
+
+    // Pass parsed Date objects to the service (cache key uses the string form)
+    const serviceOptions = { ...options };
+    if (parsedStartDate) serviceOptions.startDate = parsedStartDate;
+    if (parsedEndDate) serviceOptions.endDate = parsedEndDate;
+
+    const { data, total, page: safePage, limit: safeLimit } = await transactionService.getTransactions(req.user.id, serviceOptions);
 
     const response = {
       data,
@@ -80,10 +93,7 @@ const getAll = async (req, res) => {
       }
     };
 
-    if (!hasFilters) {
-      await cacheService.cacheTransactions(req.user.id, pageNum, response);
-    }
-
+    await cacheService.cacheTransactions(req.user.id, options, response);
     res.json(response);
   } catch (error) {
     console.error("Get transactions error:", error);
@@ -124,9 +134,12 @@ const getMonthlySummary = async (req, res) => {
     const opts = {};
     const hasMonthsFilter = months !== undefined;
     if (hasMonthsFilter) {
+      if (typeof months !== 'string') {
+        return res.status(400).json(createError(400, 'months deve ser um número válido entre 1 e 120'));
+      }
       opts.months = parseInt(months);
-      if (isNaN(opts.months) || opts.months < 1) {
-        return res.status(400).json(createError(400, 'months deve ser um número válido maior que 0'));
+      if (isNaN(opts.months) || opts.months < 1 || opts.months > 120) {
+        return res.status(400).json(createError(400, 'months deve ser um número válido entre 1 e 120'));
       }
     }
 
@@ -141,9 +154,9 @@ const getMonthlySummary = async (req, res) => {
     const data = raw.map(r => ({
       year: r._id.year,
       month: r._id.month,
-      despesas: r.despesas,
-      receitas: r.receitas,
-      saldo: r.receitas - r.despesas
+      expenses: r.expenses,
+      income: r.income,
+      balance: r.income - r.expenses
     }));
 
     const response = { data };
@@ -161,7 +174,7 @@ const getMonthlySummary = async (req, res) => {
 
 const create = async (req, res) => {
   try {
-    const { description, value, type, category, isRecurrent, billingDay, isPaid, date } = req.body;
+    const { description, value, type, category, isRecurrent, billingDay, isPaid, paymentMode, date } = req.body;
 
     // Validate category exists by ID
     if (category) {
@@ -176,20 +189,25 @@ const create = async (req, res) => {
       transactionData.isRecurrent = true;
       transactionData.billingDay = billingDay;
     }
-    // Income transactions are always considered paid
-    if (type === 'credito') {
+    // Set paymentMode: null for income, default 'debit' for expense
+    if (type === 'income') {
+      transactionData.paymentMode = null;
       transactionData.isPaid = true;
-    } else if (isPaid !== undefined) {
-      transactionData.isPaid = isPaid;
+    } else {
+      transactionData.paymentMode = paymentMode || 'debit';
+      if (isPaid !== undefined) {
+        transactionData.isPaid = isPaid;
+      }
     }
     if (date) transactionData.timestamp = new Date(date);
 
     const { transaction, balance } = await withTransaction(async (session) => {
       const tx = await transactionService.addTransaction(req.user.id, transactionData, { session });
 
-      // Only adjust balance when the transaction is marked as paid
+      // Credit card expenses never affect balance immediately
+      // Only adjust balance when the transaction is marked as paid AND not credit card
       let bal;
-      if (tx.isPaid) {
+      if (tx.isPaid && tx.paymentMode !== 'credit') {
         const delta = userService.getBalanceDelta(tx.value, tx.type);
         const updatedUser = await userService.adjustBalance(req.user.id, delta, { session });
         bal = updatedUser.balance;
@@ -213,10 +231,11 @@ const create = async (req, res) => {
 const getImportBanks = (req, res) => {
   const banks = Object.entries(BANK_MAPPINGS).map(([key, mapping]) => ({
     key,
-    label: mapping.label
+    label: mapping.label,
+    creditCard: !!mapping.creditCard
   }));
   // Always include the custom option
-  banks.push({ key: 'custom', label: 'Importação Customizada' });
+  banks.push({ key: 'custom', label: 'Importação Customizada', creditCard: false });
   res.json(banks);
 };
 
@@ -240,20 +259,20 @@ const importPreview = async (req, res) => {
       }
     }
 
-    const { rows, errors, headers } = await csvImportService.generatePreview(
+    const { rows, errors, headers, creditCard, bankLabel } = await csvImportService.generatePreview(
       req.file.buffer,
       req.user.id,
       bankKey,
       customMapping
     );
 
-    res.json({ rows, errors, headers });
+    res.json({ rows, errors, headers, creditCard, bankLabel });
   } catch (error) {
     if (error instanceof AppError) {
       return res.status(error.statusCode).json(createError(error.statusCode, error.message));
     }
     console.error("Import preview error:", error);
-    res.status(400).json(createError(400, "Erro ao processar CSV"));
+    res.status(500).json(createError(500, "Erro ao processar CSV"));
   }
 };
 
@@ -299,14 +318,19 @@ const importConfirm = async (req, res) => {
         continue;
       }
 
-      docs.push({
+      const paymentMode = tx.type === 'income' ? null : (tx.paymentMode || 'debit');
+
+      const doc = {
         description: tx.description,
         value: tx.value,
         type: tx.type,
+        paymentMode,
         category: tx.categoryId,
         timestamp: new Date(tx.date),
-        isPaid: tx.type === 'credito' ? true : (tx.isPaid || false)
-      });
+        isPaid: tx.type === 'income' ? true : (tx.isPaid || false)
+      };
+      if (tx.source) doc.source = tx.source;
+      docs.push(doc);
     }
 
     if (docs.length === 0) {
@@ -327,11 +351,11 @@ const importConfirm = async (req, res) => {
         // Bulk add
         const result = await transactionService.bulkAddTransactions(req.user.id, docs, { session });
 
-        // Adjust balance for paid transactions
+        // Adjust balance for paid transactions (skip credit card expenses)
         if (result.createdCount > 0 && result.insertedDocs) {
           let netDelta = 0;
           for (const tx of result.insertedDocs) {
-            if (tx.isPaid) {
+            if (tx.isPaid && tx.paymentMode !== 'credit') {
               netDelta += userService.getBalanceDelta(tx.value, tx.type);
             }
           }
@@ -398,10 +422,10 @@ const bulkDelete = async (req, res) => {
       const { deletedCount, balance } = await withTransaction(async (session) => {
         const { deletedCount: count, deletedTransactions } = await transactionService.bulkDeleteTransactions(req.user.id, ids, { session });
 
-        // Reverse balance for paid transactions
+        // Reverse balance for paid transactions (skip credit card expenses)
         let netDelta = 0;
         for (const tx of deletedTransactions) {
-          if (tx.isPaid) {
+          if (tx.isPaid && tx.paymentMode !== 'credit') {
             netDelta -= userService.getBalanceDelta(tx.value, tx.type);
           }
         }
@@ -456,17 +480,18 @@ const bulkUpdate = async (req, res) => {
 
     // Build safe updates object
     const safeUpdates = {};
-    const allowedFields = ['description', 'value', 'type', 'category', 'isPaid', 'isRecurrent', 'billingDay'];
+    const allowedFields = ['description', 'value', 'type', 'category', 'isPaid', 'paymentMode', 'isRecurrent', 'billingDay'];
     for (const field of allowedFields) {
       if (updates[field] !== undefined) safeUpdates[field] = updates[field];
     }
     if (updates.date !== undefined) safeUpdates.timestamp = new Date(updates.date);
 
-    // Income transactions are always paid.
-    // If changing type to credito, force isPaid = true for all.
-    // Otherwise, split: credito txs always keep isPaid = true, debito txs use provided value.
-    if (safeUpdates.type === 'credito') {
+    // Income transactions are always paid with null paymentMode.
+    // If changing type to income, force isPaid = true and paymentMode = null.
+    // Otherwise, split: income txs always keep isPaid = true, expense txs use provided value.
+    if (safeUpdates.type === 'income') {
       safeUpdates.isPaid = true;
+      safeUpdates.paymentMode = null;
     }
 
     // Per-user lock: prevent concurrent bulk mutations
@@ -482,27 +507,37 @@ const bulkUpdate = async (req, res) => {
       const { updatedCount, balance } = await withTransaction(async (session) => {
         let uCount, oldTransactions, newTransactions;
 
-        if (safeUpdates.type !== 'credito' && safeUpdates.isPaid !== undefined) {
-          // Need to protect existing credito transactions from isPaid = false
-          
+        if (safeUpdates.type !== 'income' && safeUpdates.isPaid !== undefined) {
+          // Need to protect existing income transactions from isPaid = false.
+          // Single fetch, then two targeted updateMany calls to avoid redundant queries.
           const targetTxs = await Transaction.find({ _id: { $in: ids }, userId: req.user.id }).session(session);
-          const creditoIds = targetTxs.filter(tx => tx.type === 'credito').map(tx => tx._id.toString());
-          const debitoIds = targetTxs.filter(tx => tx.type !== 'credito').map(tx => tx._id.toString());
+          const incomeTxs = targetTxs.filter(tx => tx.type === 'income');
+          const expenseTxs = targetTxs.filter(tx => tx.type !== 'income');
 
-          // Update credito transactions with isPaid forced to true
-          const creditoUpdates = { ...safeUpdates, isPaid: true };
-          const creditoResult = creditoIds.length > 0
-            ? await transactionService.bulkUpdateTransactions(req.user.id, creditoIds, creditoUpdates, { session })
-            : { updatedCount: 0, oldTransactions: [], newTransactions: [] };
+          const incomeUpdates = { ...safeUpdates, isPaid: true };
 
-          // Update debito transactions normally
-          const debitoResult = debitoIds.length > 0
-            ? await transactionService.bulkUpdateTransactions(req.user.id, debitoIds, safeUpdates, { session })
-            : { updatedCount: 0, oldTransactions: [], newTransactions: [] };
+          if (incomeTxs.length > 0) {
+            await Transaction.updateMany(
+              { _id: { $in: incomeTxs.map(tx => tx._id) }, userId: req.user.id },
+              { $set: incomeUpdates },
+              { runValidators: true, session }
+            );
+          }
+          if (expenseTxs.length > 0) {
+            await Transaction.updateMany(
+              { _id: { $in: expenseTxs.map(tx => tx._id) }, userId: req.user.id },
+              { $set: safeUpdates },
+              { runValidators: true, session }
+            );
+          }
 
-          uCount = creditoResult.updatedCount + debitoResult.updatedCount;
-          oldTransactions = [...creditoResult.oldTransactions, ...debitoResult.oldTransactions];
-          newTransactions = [...creditoResult.newTransactions, ...debitoResult.newTransactions];
+          oldTransactions = targetTxs;
+          newTransactions = targetTxs.map(tx => {
+            const obj = tx.toObject();
+            const applied = tx.type === 'income' ? incomeUpdates : safeUpdates;
+            return { ...obj, ...applied };
+          });
+          uCount = targetTxs.length;
         } else {
           const result = await transactionService.bulkUpdateTransactions(req.user.id, ids, safeUpdates, { session });
           uCount = result.updatedCount;
@@ -510,15 +545,15 @@ const bulkUpdate = async (req, res) => {
           newTransactions = result.newTransactions;
         }
 
-        // Recalculate balance delta
+        // Recalculate balance delta (skip credit card expenses)
         let netDelta = 0;
         for (const oldTx of oldTransactions) {
-          if (oldTx.isPaid) {
+          if (oldTx.isPaid && oldTx.paymentMode !== 'credit') {
             netDelta -= userService.getBalanceDelta(oldTx.value, oldTx.type);
           }
         }
         for (const newTx of newTransactions) {
-          if (newTx.isPaid) {
+          if (newTx.isPaid && newTx.paymentMode !== 'credit') {
             netDelta += userService.getBalanceDelta(newTx.value, newTx.type);
           }
         }
@@ -567,7 +602,7 @@ const getById = async (req, res) => {
 
 const update = async (req, res) => {
   try {
-    const { description, value, type, category, date, isRecurrent, billingDay, isActive, isPaid } = req.body;
+    const { description, value, type, category, date, isRecurrent, billingDay, isActive, isPaid, paymentMode } = req.body;
 
     // Validate category exists by ID if provided
     if (category) {
@@ -587,6 +622,7 @@ const update = async (req, res) => {
     if (billingDay !== undefined) updates.billingDay = billingDay;
     if (isActive !== undefined) updates.isActive = isActive;
     if (isPaid !== undefined) updates.isPaid = isPaid;
+    if (paymentMode !== undefined) updates.paymentMode = paymentMode;
 
     const { newTransaction, balance } = await withTransaction(async (session) => {
       const { oldTransaction, newTransaction: newTx } = await transactionService.updateTransaction(
@@ -596,17 +632,28 @@ const update = async (req, res) => {
         { session }
       );
 
-      // Income transactions are always considered paid
+      // Income transactions are always considered paid and have null paymentMode
       const effectiveType = type || oldTransaction.type;
-      if (effectiveType === 'credito' && !newTx.isPaid) {
-        newTx.isPaid = true;
-        await newTx.save({ session });
-        await newTx.populate('category');
+      if (effectiveType === 'income') {
+        let needsSave = false;
+        if (!newTx.isPaid) {
+          newTx.isPaid = true;
+          needsSave = true;
+        }
+        if (newTx.paymentMode !== null) {
+          newTx.paymentMode = null;
+          needsSave = true;
+        }
+        if (needsSave) {
+          await newTx.save({ session });
+          await newTx.populate('category');
+        }
       }
 
       // Balance adjustment depends on isPaid state transition
-      const wasPaid = oldTransaction.isPaid;
-      const nowPaid = newTx.isPaid;
+      // Credit card expenses never affect balance directly
+      const wasPaid = oldTransaction.isPaid && oldTransaction.paymentMode !== 'credit';
+      const nowPaid = newTx.isPaid && newTx.paymentMode !== 'credit';
 
       let netDelta = 0;
       if (wasPaid) netDelta -= userService.getBalanceDelta(oldTransaction.value, oldTransaction.type);
@@ -641,8 +688,8 @@ const remove = async (req, res) => {
     const balance = await withTransaction(async (session) => {
       const deleted = await transactionService.deleteTransaction(req.user.id, req.params.id, { session });
 
-      // Only reverse balance if the deleted transaction was paid
-      if (deleted.isPaid) {
+      // Only reverse balance if the deleted transaction was paid and not a credit card expense
+      if (deleted.isPaid && deleted.paymentMode !== 'credit') {
         const delta = userService.getBalanceDelta(deleted.value, deleted.type);
         const updatedUser = await userService.adjustBalance(req.user.id, -delta, { session });
         return updatedUser.balance;

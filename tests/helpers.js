@@ -46,11 +46,11 @@ async function createAdminUser(overrides = {}) {
  */
 async function createDefaultCategories(userId) {
   const defaults = [
-    { name: 'Alimentação', type: 'debito', color: '#FF6B6B', userId },
-    { name: 'Transporte', type: 'debito', color: '#4ECDC4', userId },
-    { name: 'Salário', type: 'credito', color: '#82E0AA', userId },
-    { name: 'Freelance', type: 'credito', color: '#AED6F1', userId },
-    { name: 'Sem Categoria', type: 'debito', color: '#D5DBDB', userId },
+    { name: 'Alimentação', type: 'expense', color: '#FF6B6B', userId },
+    { name: 'Transporte', type: 'expense', color: '#4ECDC4', userId },
+    { name: 'Salário', type: 'income', color: '#82E0AA', userId },
+    { name: 'Freelance', type: 'income', color: '#AED6F1', userId },
+    { name: 'Sem Categoria', type: 'expense', color: '#D5DBDB', userId },
   ];
   return Category.insertMany(defaults);
 }

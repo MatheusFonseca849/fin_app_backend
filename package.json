@@ -9,7 +9,8 @@
     "start": "node server.js",
     "seed": "node src/scripts/seed.js",
     "purge": "node src/scripts/purge.js",
-    "promote-admin": "node src/scripts/promoteAdmin.js"
+    "promote-admin": "node src/scripts/promoteAdmin.js",
+    "migrate:payment-mode": "node src/scripts/migratePaymentMode.js"
   },
   "keywords": [
     "finance",

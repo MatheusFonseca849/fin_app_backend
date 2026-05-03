@@ -129,8 +129,8 @@ describe('Security & Middleware', () => {
   // ============================================
   describe('Input Validation', () => {
     it('should reject oversized JSON body', async () => {
-      // express.json({ limit: '100kb' }) — send > 100kb
-      const largeBody = { data: 'x'.repeat(200 * 1024) };
+      // express.json({ limit: '256kb' }) — send > 256kb
+      const largeBody = { data: 'x'.repeat(300 * 1024) };
       const res = await request(app)
         .post('/api/v1/users/register')
         .set('Origin', ORIGIN)

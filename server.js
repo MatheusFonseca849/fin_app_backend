@@ -7,6 +7,7 @@ validateEnv();
 const app = require('./src/app');
 const database = require('./src/config/database');
 const recurrenceService = require('./src/services/recurrence.service');
+const creditCardService = require('./src/services/creditCard.service');
 const redisClient = require('./src/config/redis');
 
 const PORT = process.env.PORT || 3000;
@@ -28,8 +29,9 @@ async function startServer() {
       console.log('📊 MongoDB status:', database.getStatus());
     });
 
-    // 4. Start recurrence scheduler
+    // 4. Start schedulers
     recurrenceService.start();
+    creditCardService.start();
     
   } catch (error) {
     console.error('❌ Failed to start server:', error);
@@ -65,8 +67,9 @@ async function gracefulShutdown(signal) {
       console.log('✅ HTTP server closed');
     }
 
-    // 2. Stop recurrence scheduler
+    // 2. Stop schedulers
     recurrenceService.stop();
+    creditCardService.stop();
 
     // 3. Disconnect Redis
     await redisClient.disconnect();

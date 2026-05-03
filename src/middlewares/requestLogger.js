@@ -1,4 +1,4 @@
-const SENSITIVE_FIELDS = ['password', 'token', 'refreshToken', 'accessToken', 'secret'];
+const SENSITIVE_FIELDS = ['password', 'token', 'refreshToken', 'accessToken', 'secret', 'email', 'firstName', 'lastName'];
 
 const sanitizeObject = (obj) => {
     if (!obj || typeof obj !== 'object') return obj;

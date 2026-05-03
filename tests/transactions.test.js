@@ -44,8 +44,8 @@ describe('Transaction Endpoints', () => {
     authUser = result.user;
     token = result.accessToken;
     const cats = await createDefaultCategories(authUser._id);
-    debitCategory = cats.find(c => c.type === 'debito' && c.name !== 'Sem Categoria');
-    creditCategory = cats.find(c => c.type === 'credito' && c.name !== 'Sem Categoria');
+    debitCategory = cats.find(c => c.type === 'expense' && c.name !== 'Sem Categoria');
+    creditCategory = cats.find(c => c.type === 'income' && c.name !== 'Sem Categoria');
   });
 
   // ============================================
@@ -60,7 +60,7 @@ describe('Transaction Endpoints', () => {
         .send({
           description: 'Almoço',
           value: 25.50,
-          type: 'debito',
+          type: 'expense',
           category: debitCategory._id.toString(),
           isPaid: true,
           date: new Date().toISOString(),
@@ -81,7 +81,7 @@ describe('Transaction Endpoints', () => {
         .send({
           description: 'Salary',
           value: 1000.00,
-          type: 'credito',
+          type: 'income',
           category: creditCategory._id.toString(),
           isPaid: true,
           date: new Date().toISOString(),
@@ -100,7 +100,7 @@ describe('Transaction Endpoints', () => {
         .send({
           description: 'Future bill',
           value: 50.00,
-          type: 'debito',
+          type: 'expense',
           category: debitCategory._id.toString(),
           isPaid: false,
         });
@@ -116,7 +116,7 @@ describe('Transaction Endpoints', () => {
         .set('Origin', ORIGIN)
         .send({
           value: 10.00,
-          type: 'debito',
+          type: 'expense',
           category: debitCategory._id.toString(),
         });
 
@@ -146,7 +146,7 @@ describe('Transaction Endpoints', () => {
         .send({
           description: 'Zero',
           value: 0,
-          type: 'debito',
+          type: 'expense',
           category: debitCategory._id.toString(),
         });
 
@@ -161,7 +161,7 @@ describe('Transaction Endpoints', () => {
         .send({
           description: 'Freelance',
           value: 500.00,
-          type: 'credito',
+          type: 'income',
           category: creditCategory._id.toString(),
           isPaid: false, // should be overridden to true
           date: new Date().toISOString(),
@@ -182,7 +182,7 @@ describe('Transaction Endpoints', () => {
         userId: authUser._id,
         description: 'Test tx',
         value: 1000,
-        type: 'debito',
+        type: 'expense',
         category: debitCategory._id,
         isPaid: true,
       });
@@ -199,13 +199,13 @@ describe('Transaction Endpoints', () => {
     it('should not return transactions from other users', async () => {
       const other = await createAuthenticatedUser({ email: 'other-tx@example.com' });
       const otherCats = await createDefaultCategories(other.user._id);
-      const otherCat = otherCats.find(c => c.type === 'debito');
+      const otherCat = otherCats.find(c => c.type === 'expense');
 
       await Transaction.create({
         userId: other.user._id,
         description: 'Other user tx',
         value: 500,
-        type: 'debito',
+        type: 'expense',
         category: otherCat._id,
         isPaid: true,
       });
@@ -235,7 +235,7 @@ describe('Transaction Endpoints', () => {
         userId: authUser._id,
         description: 'Original',
         value: 1000,
-        type: 'debito',
+        type: 'expense',
         category: debitCategory._id,
         isPaid: false,
       });
@@ -255,7 +255,7 @@ describe('Transaction Endpoints', () => {
         userId: authUser._id,
         description: 'Bill',
         value: 5000,
-        type: 'debito',
+        type: 'expense',
         category: debitCategory._id,
         isPaid: false,
       });
@@ -297,7 +297,7 @@ describe('Transaction Endpoints', () => {
         userId: authUser._id,
         description: 'To delete',
         value: 2000,
-        type: 'debito',
+        type: 'expense',
         category: debitCategory._id,
         isPaid: true,
       });
@@ -321,7 +321,7 @@ describe('Transaction Endpoints', () => {
         userId: authUser._id,
         description: 'Unpaid to delete',
         value: 2000,
-        type: 'debito',
+        type: 'expense',
         category: debitCategory._id,
         isPaid: false,
       });
@@ -361,7 +361,7 @@ describe('Transaction Endpoints', () => {
         userId: authUser._id,
         description: 'Grocery',
         value: 5000,
-        type: 'debito',
+        type: 'expense',
         category: debitCategory._id,
         isPaid: true,
         timestamp: thisMonth,
@@ -372,7 +372,7 @@ describe('Transaction Endpoints', () => {
         userId: authUser._id,
         description: 'Salary',
         value: 100000,
-        type: 'credito',
+        type: 'income',
         category: creditCategory._id,
         isPaid: true,
         timestamp: thisMonth,
@@ -385,7 +385,7 @@ describe('Transaction Endpoints', () => {
         userId: authUser._id,
         description: 'Upcoming bill',
         value: 3000,
-        type: 'debito',
+        type: 'expense',
         category: debitCategory._id,
         isPaid: false,
         timestamp: tomorrow,
@@ -396,12 +396,15 @@ describe('Transaction Endpoints', () => {
         .set('Authorization', `Bearer ${token}`);
 
       expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('monthlyExpenses');
+      expect(res.body).toHaveProperty('monthlyDebitExpenses');
+      expect(res.body).toHaveProperty('monthlyCreditCardTotal');
+      expect(res.body).toHaveProperty('monthlyExpensesTotal');
       expect(res.body).toHaveProperty('monthlyIncome');
       expect(res.body).toHaveProperty('monthlyBalance');
       expect(res.body).toHaveProperty('expensesByCategory');
+      expect(res.body).toHaveProperty('creditCardByCategory');
       expect(res.body).toHaveProperty('upcomingExpenses');
-      expect(res.body.monthlyExpenses).toBe(5000);
+      expect(res.body.monthlyDebitExpenses).toBe(5000);
       expect(res.body.monthlyIncome).toBe(100000);
       expect(Array.isArray(res.body.expensesByCategory)).toBe(true);
       expect(Array.isArray(res.body.upcomingExpenses)).toBe(true);
@@ -415,9 +418,48 @@ describe('Transaction Endpoints', () => {
         .set('Authorization', `Bearer ${token}`);
 
       expect(res.status).toBe(200);
-      expect(res.body.monthlyExpenses).toBe(0);
+      expect(res.body.monthlyDebitExpenses).toBe(0);
+      expect(res.body.monthlyCreditCardTotal).toBe(0);
       expect(res.body.monthlyIncome).toBe(0);
       expect(res.body.upcomingExpenses).toEqual([]);
+    });
+
+    it('should separate debit and credit card expenses', async () => {
+      const now = new Date();
+      const thisMonth = new Date(now.getFullYear(), now.getMonth(), 15);
+
+      // Debit expense
+      await Transaction.create({
+        userId: authUser._id,
+        description: 'Grocery',
+        value: 5000,
+        type: 'expense',
+        paymentMode: 'debit',
+        category: debitCategory._id,
+        isPaid: true,
+        timestamp: thisMonth,
+      });
+
+      // Credit card expense
+      await Transaction.create({
+        userId: authUser._id,
+        description: 'Online purchase',
+        value: 8000,
+        type: 'expense',
+        paymentMode: 'credit',
+        category: debitCategory._id,
+        isPaid: false,
+        timestamp: thisMonth,
+      });
+
+      const res = await request(app)
+        .get('/api/v1/records/dashboard')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.monthlyDebitExpenses).toBe(5000);
+      expect(res.body.monthlyCreditCardTotal).toBe(8000);
+      expect(res.body.monthlyExpensesTotal).toBe(13000);
     });
 
     it('should reject unauthenticated request', async () => {
@@ -425,6 +467,136 @@ describe('Transaction Endpoints', () => {
         .get('/api/v1/records/dashboard');
 
       expect(res.status).toBe(401);
+    });
+  });
+
+  // ============================================
+  // Credit Card paymentMode tests
+  // ============================================
+  describe('Credit Card paymentMode', () => {
+    it('should create a credit card expense without affecting balance', async () => {
+      await User.findByIdAndUpdate(authUser._id, { balance: 10000 });
+
+      const res = await request(app)
+        .post('/api/v1/records')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', ORIGIN)
+        .send({
+          description: 'CC purchase',
+          value: 50.00,
+          type: 'expense',
+          paymentMode: 'credit',
+          category: debitCategory._id.toString(),
+          date: new Date().toISOString(),
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.transaction.paymentMode).toBe('credit');
+      expect(res.body.transaction.isPaid).toBe(false);
+
+      // Balance should remain unchanged
+      const updated = await User.findById(authUser._id);
+      expect(updated.balance).toBe(10000);
+    });
+
+    it('should create a debit expense that does affect balance when paid', async () => {
+      await User.findByIdAndUpdate(authUser._id, { balance: 10000 });
+
+      const res = await request(app)
+        .post('/api/v1/records')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', ORIGIN)
+        .send({
+          description: 'Debit purchase',
+          value: 30.00,
+          type: 'expense',
+          paymentMode: 'debit',
+          category: debitCategory._id.toString(),
+          isPaid: true,
+          date: new Date().toISOString(),
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.transaction.paymentMode).toBe('debit');
+
+      const updated = await User.findById(authUser._id);
+      expect(updated.balance).toBe(7000); // 10000 - 3000 cents
+    });
+
+    it('should default paymentMode to debit for expenses without paymentMode', async () => {
+      const res = await request(app)
+        .post('/api/v1/records')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', ORIGIN)
+        .send({
+          description: 'No mode specified',
+          value: 10.00,
+          type: 'expense',
+          category: debitCategory._id.toString(),
+          date: new Date().toISOString(),
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.transaction.paymentMode).toBe('debit');
+    });
+
+    it('should force paymentMode=null for income transactions', async () => {
+      const res = await request(app)
+        .post('/api/v1/records')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', ORIGIN)
+        .send({
+          description: 'Salary',
+          value: 100.00,
+          type: 'income',
+          paymentMode: 'credit', // should be overridden to null
+          category: creditCategory._id.toString(),
+          date: new Date().toISOString(),
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.transaction.paymentMode).toBeNull();
+    });
+
+    it('should not adjust balance when deleting a credit card expense', async () => {
+      await User.findByIdAndUpdate(authUser._id, { balance: 10000 });
+
+      const tx = await Transaction.create({
+        userId: authUser._id,
+        description: 'CC to delete',
+        value: 5000,
+        type: 'expense',
+        paymentMode: 'credit',
+        category: debitCategory._id,
+        isPaid: true,
+      });
+
+      const res = await request(app)
+        .delete(`/api/v1/records/${tx._id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', ORIGIN);
+
+      expect(res.status).toBe(200);
+
+      const updated = await User.findById(authUser._id);
+      expect(updated.balance).toBe(10000); // unchanged
+    });
+
+    it('should reject invalid paymentMode value', async () => {
+      const res = await request(app)
+        .post('/api/v1/records')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', ORIGIN)
+        .send({
+          description: 'Invalid mode',
+          value: 10.00,
+          type: 'expense',
+          paymentMode: 'bitcoin',
+          category: debitCategory._id.toString(),
+          date: new Date().toISOString(),
+        });
+
+      expect(res.status).toBe(400);
     });
   });
 
@@ -439,7 +611,7 @@ describe('Transaction Endpoints', () => {
         userId: authUser._id,
         description: 'Bulk del 1',
         value: 2000,
-        type: 'debito',
+        type: 'expense',
         category: debitCategory._id,
         isPaid: true,
       });
@@ -447,7 +619,7 @@ describe('Transaction Endpoints', () => {
         userId: authUser._id,
         description: 'Bulk del 2',
         value: 3000,
-        type: 'debito',
+        type: 'expense',
         category: debitCategory._id,
         isPaid: true,
       });
@@ -489,13 +661,13 @@ describe('Transaction Endpoints', () => {
     it('should not delete transactions from other users', async () => {
       const other = await createAuthenticatedUser({ email: 'other-bulk@example.com' });
       const otherCats = await createDefaultCategories(other.user._id);
-      const otherCat = otherCats.find(c => c.type === 'debito');
+      const otherCat = otherCats.find(c => c.type === 'expense');
 
       const otherTx = await Transaction.create({
         userId: other.user._id,
         description: 'Other user tx',
         value: 1000,
-        type: 'debito',
+        type: 'expense',
         category: otherCat._id,
         isPaid: true,
       });
@@ -524,7 +696,7 @@ describe('Transaction Endpoints', () => {
         userId: authUser._id,
         description: 'BU 1',
         value: 1000,
-        type: 'debito',
+        type: 'expense',
         category: debitCategory._id,
         isPaid: false,
       });
@@ -532,7 +704,7 @@ describe('Transaction Endpoints', () => {
         userId: authUser._id,
         description: 'BU 2',
         value: 2000,
-        type: 'debito',
+        type: 'expense',
         category: debitCategory._id,
         isPaid: false,
       });
@@ -584,12 +756,12 @@ describe('Transaction Endpoints', () => {
       expect(res.status).toBe(400);
     });
 
-    it('should force isPaid=true when changing type to credito', async () => {
+    it('should force isPaid=true when changing type to income', async () => {
       const tx = await Transaction.create({
         userId: authUser._id,
         description: 'To credit',
         value: 5000,
-        type: 'debito',
+        type: 'expense',
         category: debitCategory._id,
         isPaid: false,
       });
@@ -600,13 +772,13 @@ describe('Transaction Endpoints', () => {
         .set('Origin', ORIGIN)
         .send({
           ids: [tx._id.toString()],
-          updates: { type: 'credito', category: creditCategory._id.toString() },
+          updates: { type: 'income', category: creditCategory._id.toString() },
         });
 
       expect(res.status).toBe(200);
 
       const updated = await Transaction.findById(tx._id);
-      expect(updated.type).toBe('credito');
+      expect(updated.type).toBe('income');
       expect(updated.isPaid).toBe(true);
     });
   });
@@ -628,7 +800,7 @@ describe('Transaction Endpoints', () => {
             {
               description: 'Import 1',
               value: 50.00,
-              type: 'debito',
+              type: 'expense',
               categoryId: debitCategory._id.toString(),
               date: tomorrow.toISOString(),
               isPaid: true,
@@ -636,7 +808,7 @@ describe('Transaction Endpoints', () => {
             {
               description: 'Import 2',
               value: 100.00,
-              type: 'credito',
+              type: 'income',
               categoryId: creditCategory._id.toString(),
               date: tomorrow.toISOString(),
               isPaid: true,
@@ -687,7 +859,7 @@ describe('Transaction Endpoints', () => {
             {
               description: 'Bad cat',
               value: 10.00,
-              type: 'debito',
+              type: 'expense',
               categoryId: 'not-a-mongo-id',
               date: new Date().toISOString(),
             },
@@ -695,6 +867,37 @@ describe('Transaction Endpoints', () => {
         });
 
       expect(res.status).toBe(400);
+    });
+
+    it('should import credit card transactions without affecting balance', async () => {
+      await User.findByIdAndUpdate(authUser._id, { balance: 10000 });
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const res = await request(app)
+        .post('/api/v1/records/import/confirm')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', ORIGIN)
+        .send({
+          transactions: [
+            {
+              description: 'CC Import 1',
+              value: 25.00,
+              type: 'expense',
+              paymentMode: 'credit',
+              categoryId: debitCategory._id.toString(),
+              date: tomorrow.toISOString(),
+              isPaid: false,
+            },
+          ],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.createdCount).toBe(1);
+
+      // Balance unchanged for credit card import
+      const updated = await User.findById(authUser._id);
+      expect(updated.balance).toBe(10000);
     });
 
     it('should skip duplicate transactions', async () => {
@@ -706,7 +909,7 @@ describe('Transaction Endpoints', () => {
         userId: authUser._id,
         description: 'Dup test',
         value: 5000,
-        type: 'debito',
+        type: 'expense',
         category: debitCategory._id,
         isPaid: true,
         timestamp: date,
@@ -721,7 +924,7 @@ describe('Transaction Endpoints', () => {
             {
               description: 'Dup test',
               value: 50.00, // 50.00 * 100 = 5000 cents — matches existing
-              type: 'debito',
+              type: 'expense',
               categoryId: debitCategory._id.toString(),
               date: date.toISOString(),
               isPaid: true,
@@ -750,7 +953,7 @@ describe('Transaction Endpoints', () => {
         userId: authUser._id,
         description: 'Calendar tx',
         value: 3000,
-        type: 'debito',
+        type: 'expense',
         category: debitCategory._id,
         isPaid: true,
         timestamp: now,
@@ -817,7 +1020,7 @@ describe('Transaction Endpoints', () => {
         userId: authUser._id,
         description: 'Monthly test',
         value: 5000,
-        type: 'debito',
+        type: 'expense',
         category: debitCategory._id,
         isPaid: true,
         isRecurrent: false,
@@ -834,9 +1037,9 @@ describe('Transaction Endpoints', () => {
       if (res.body.data.length > 0) {
         expect(res.body.data[0]).toHaveProperty('year');
         expect(res.body.data[0]).toHaveProperty('month');
-        expect(res.body.data[0]).toHaveProperty('despesas');
-        expect(res.body.data[0]).toHaveProperty('receitas');
-        expect(res.body.data[0]).toHaveProperty('saldo');
+        expect(res.body.data[0]).toHaveProperty('expenses');
+        expect(res.body.data[0]).toHaveProperty('income');
+        expect(res.body.data[0]).toHaveProperty('balance');
       }
     });
 
@@ -845,6 +1048,125 @@ describe('Transaction Endpoints', () => {
         .get('/api/v1/records/monthly-summary');
 
       expect(res.status).toBe(401);
+    });
+
+    it('should accept months up to 120', async () => {
+      const res = await request(app)
+        .get('/api/v1/records/monthly-summary?months=120')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(200);
+    });
+
+    it('should reject months exceeding 120', async () => {
+      const res = await request(app)
+        .get('/api/v1/records/monthly-summary?months=121')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(400);
+    });
+  });
+
+  // ============================================
+  // Regression: Validation Fixes
+  // ============================================
+  describe('Validation Regression Tests', () => {
+    it('should reject transaction without category (BUG-B2)', async () => {
+      const res = await request(app)
+        .post('/api/v1/records')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', ORIGIN)
+        .send({
+          description: 'No category',
+          value: 10.00,
+          type: 'expense',
+          date: new Date().toISOString(),
+        });
+
+      expect(res.status).toBe(400);
+      const fields = res.body.error?.details?.map(d => d.field) || [];
+      expect(fields).toContain('category');
+    });
+
+    it('should reject isRecurrent=true without billingDay (LOGIC-3)', async () => {
+      const res = await request(app)
+        .post('/api/v1/records')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', ORIGIN)
+        .send({
+          description: 'Recurrent no billing',
+          value: 50.00,
+          type: 'expense',
+          category: debitCategory._id.toString(),
+          isRecurrent: true,
+          date: new Date().toISOString(),
+        });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should accept isRecurrent=true with billingDay', async () => {
+      const res = await request(app)
+        .post('/api/v1/records')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', ORIGIN)
+        .send({
+          description: 'Recurrent with billing',
+          value: 50.00,
+          type: 'expense',
+          category: debitCategory._id.toString(),
+          isRecurrent: true,
+          billingDay: 15,
+          date: new Date().toISOString(),
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.transaction.isRecurrent).toBe(true);
+      expect(res.body.transaction.billingDay).toBe(15);
+    });
+
+    it('should include same-day transactions when filtering by endDate (LOGIC-2)', async () => {
+      const targetDate = new Date(Date.UTC(2025, 5, 15, 14, 30, 0));
+
+      await Transaction.create({
+        userId: authUser._id,
+        description: 'Afternoon tx',
+        value: 1000,
+        type: 'expense',
+        category: debitCategory._id,
+        isPaid: true,
+        timestamp: targetDate,
+      });
+
+      const res = await request(app)
+        .get('/api/v1/records?endDate=2025-06-15')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.length).toBe(1);
+      expect(res.body.data[0].description).toBe('Afternoon tx');
+    });
+
+    it('should include same-day transactions in calendar endDate (LOGIC-2)', async () => {
+      const targetDate = new Date(Date.UTC(2025, 5, 15, 18, 0, 0));
+
+      await Transaction.create({
+        userId: authUser._id,
+        description: 'Evening calendar tx',
+        value: 2000,
+        type: 'expense',
+        category: debitCategory._id,
+        isPaid: true,
+        timestamp: targetDate,
+      });
+
+      const res = await request(app)
+        .get('/api/v1/records/calendar?startDate=2025-06-01&endDate=2025-06-15')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.length).toBe(1);
+      expect(res.body.data[0].description).toBe('Evening calendar tx');
     });
   });
 });

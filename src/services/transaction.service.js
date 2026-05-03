@@ -8,7 +8,7 @@ class TransactionService {
   // Transaction Operations
   // ============================================
 
-  async getTransactions(userId, { page = 1, limit = 50, type, category, isRecurrent, isPaid, startDate, endDate } = {}) {
+  async getTransactions(userId, { page = 1, limit = 50, type, category, isRecurrent, isPaid, paymentMode, startDate, endDate } = {}) {
     const MAX_LIMIT = 200;
     const safePage = Math.max(1, page);
     const safeLimit = Math.min(Math.max(1, limit), MAX_LIMIT);
@@ -18,10 +18,20 @@ class TransactionService {
     if (category) filter.category = category;
     if (isRecurrent !== undefined) filter.isRecurrent = isRecurrent;
     if (isPaid !== undefined) filter.isPaid = isPaid;
+    if (paymentMode === 'debit') {
+      // "debit" includes both explicit 'debit' and null (legacy/income-adjacent expenses)
+      filter.paymentMode = { $in: ['debit', null] };
+    } else if (paymentMode) {
+      filter.paymentMode = paymentMode;
+    }
     if (startDate || endDate) {
       filter.timestamp = {};
       if (startDate) filter.timestamp.$gte = startDate;
-      if (endDate) filter.timestamp.$lte = endDate;
+      if (endDate) {
+        const endOfDay = new Date(endDate);
+        endOfDay.setUTCHours(23, 59, 59, 999);
+        filter.timestamp.$lte = endOfDay;
+      }
     }
 
     const [data, total] = await Promise.all([
@@ -42,7 +52,11 @@ class TransactionService {
     if (startDate || endDate) {
       filter.timestamp = {};
       if (startDate) filter.timestamp.$gte = startDate;
-      if (endDate) filter.timestamp.$lte = endDate;
+      if (endDate) {
+        const endOfDay = new Date(endDate);
+        endOfDay.setUTCHours(23, 59, 59, 999);
+        filter.timestamp.$lte = endOfDay;
+      }
     }
 
     return await Transaction.find(filter)
@@ -88,29 +102,39 @@ class TransactionService {
   }
 
   async bulkAddTransactions(userId, transactions, { session } = {}) {
-    // Build date range from incoming transactions for scoped query
-    const timestamps = transactions.map(tx => tx.timestamp);
-    const minDate = new Date(Math.min(...timestamps.map(d => d.getTime())));
-    const maxDate = new Date(Math.max(...timestamps.map(d => d.getTime())));
+    // Single-pass date range — avoids spreading into Math.min/max which
+    // overflows the call stack on large arrays (SCALE-3).
+    let minTs = Infinity;
+    let maxTs = -Infinity;
+    for (const tx of transactions) {
+      const t = tx.timestamp.getTime();
+      if (t < minTs) minTs = t;
+      if (t > maxTs) maxTs = t;
+    }
+    const minDate = new Date(minTs);
+    const maxDate = new Date(maxTs);
     minDate.setHours(0, 0, 0, 0);
     maxDate.setHours(23, 59, 59, 999);
 
-    // Fetch existing transactions within the date range
-    const existingQuery = Transaction.find({
-      userId,
-      timestamp: { $gte: minDate, $lte: maxDate }
-    });
-    if (session) existingQuery.session(session);
-    const existing = await existingQuery.lean();
-
-    // Build a Set of fingerprints for fast lookup
+    // Build fingerprint Set incrementally via cursor to avoid
+    // materialising all existing transactions in memory at once.
     const fingerprint = (tx) => {
       const d = new Date(tx.timestamp);
       const catId = tx.category?._id?.toString?.() || tx.category?.toString?.() || '';
       return `${tx.description}|${tx.value}|${tx.type}|${catId}|${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
     };
 
-    const existingSet = new Set(existing.map(fingerprint));
+    const existingQuery = Transaction.find({
+      userId,
+      timestamp: { $gte: minDate, $lte: maxDate }
+    }).lean();
+    if (session) existingQuery.session(session);
+
+    const existingSet = new Set();
+    const cursor = existingQuery.cursor();
+    for await (const doc of cursor) {
+      existingSet.add(fingerprint(doc));
+    }
 
     // Partition into new vs duplicate
     const newTransactions = [];
@@ -132,45 +156,43 @@ class TransactionService {
       };
     }
 
-    const docs = newTransactions.map(txData => ({ ...txData, userId }));
+    // Chunk inserts into batches to bound peak memory and stay
+    // under MongoDB's 16 MB BSON document-size limit per operation.
+    const BATCH_SIZE = 500;
+    const allInserted = [];
+    const allErrors = [];
 
-    // Inside a transaction all writes are atomic — use ordered:true (default).
-    // Without a session, ordered:false allows partial inserts to succeed.
-    if (session) {
-      const result = await Transaction.insertMany(docs, { session });
-      return {
-        createdCount: result.length,
-        insertedDocs: result,
-        skippedCount,
-        errorCount: 0,
-        errors: []
-      };
+    for (let i = 0; i < newTransactions.length; i += BATCH_SIZE) {
+      const batch = newTransactions.slice(i, i + BATCH_SIZE).map(txData => ({ ...txData, userId }));
+
+      if (session) {
+        const result = await Transaction.insertMany(batch, { session });
+        allInserted.push(...result);
+      } else {
+        try {
+          const result = await Transaction.insertMany(batch, { ordered: false });
+          allInserted.push(...result);
+        } catch (error) {
+          if (error.insertedDocs) allInserted.push(...error.insertedDocs);
+          if (error.writeErrors) {
+            for (const e of error.writeErrors) {
+              allErrors.push({
+                transaction: batch[e.index],
+                error: e.errmsg || e.message
+              });
+            }
+          }
+        }
+      }
     }
 
-    try {
-      const result = await Transaction.insertMany(docs, { ordered: false });
-      return {
-        createdCount: result.length,
-        insertedDocs: result,
-        skippedCount,
-        errorCount: 0,
-        errors: []
-      };
-    } catch (error) {
-      const insertedDocs = error.insertedDocs || [];
-      const errorDetails = (error.writeErrors || []).map(e => ({
-        transaction: docs[e.index],
-        error: e.errmsg || e.message
-      }));
-
-      return {
-        createdCount: insertedDocs.length,
-        insertedDocs,
-        skippedCount,
-        errorCount: errorDetails.length,
-        errors: errorDetails
-      };
-    }
+    return {
+      createdCount: allInserted.length,
+      insertedDocs: allInserted,
+      skippedCount,
+      errorCount: allErrors.length,
+      errors: allErrors
+    };
   }
 
   // ============================================
@@ -187,7 +209,7 @@ class TransactionService {
 
     if (months) {
       const cutoff = new Date();
-      cutoff.setMonth(cutoff.getMonth() - months);
+      cutoff.setMonth(cutoff.getMonth() - (months - 1));
       cutoff.setDate(1);
       cutoff.setHours(0, 0, 0, 0);
       match.timestamp = { $gte: cutoff };
@@ -201,11 +223,11 @@ class TransactionService {
             year: { $year: '$timestamp' },
             month: { $month: '$timestamp' }
           },
-          despesas: {
-            $sum: { $cond: [{ $eq: ['$type', 'debito'] }, '$value', 0] }
+          expenses: {
+            $sum: { $cond: [{ $eq: ['$type', 'expense'] }, '$value', 0] }
           },
-          receitas: {
-            $sum: { $cond: [{ $eq: ['$type', 'credito'] }, '$value', 0] }
+          income: {
+            $sum: { $cond: [{ $eq: ['$type', 'income'] }, '$value', 0] }
           }
         }
       },
@@ -215,7 +237,7 @@ class TransactionService {
 
   /**
    * Returns current-month summary (expenses by category, totals) and upcoming unpaid expenses.
-   * Single aggregation + one query — replaces the need for the frontend to fetch ALL transactions.
+   * Single $facet aggregation — one index scan feeds three sub-pipelines.
    */
   async getDashboardData(userId) {
     const objectId = mongoose.Types.ObjectId.createFromHexString(userId);
@@ -225,59 +247,119 @@ class TransactionService {
     const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
     const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
-    const [categoryBreakdown, upcomingExpenses] = await Promise.all([
-      // Current month paid transactions grouped by category
-      Transaction.aggregate([
-        {
-          $match: {
-            userId: objectId,
-            isPaid: true,
-            timestamp: { $gte: monthStart, $lte: monthEnd }
-          }
-        },
-        {
-          $lookup: {
-            from: 'categories',
-            localField: 'category',
-            foreignField: '_id',
-            as: 'cat'
-          }
-        },
-        { $unwind: { path: '$cat', preserveNullAndEmptyArrays: true } },
-        {
-          $group: {
-            _id: {
-              type: '$type',
-              categoryId: '$cat._id',
-              categoryName: { $ifNull: ['$cat.name', 'Sem Categoria'] },
-              categoryColor: { $ifNull: ['$cat.color', '#757575'] }
-            },
-            total: { $sum: '$value' }
-          }
+    // Single $facet aggregation replaces 3 parallel queries.
+    // One index scan on { userId, timestamp } feeds all three sub-pipelines.
+    const [result] = await Transaction.aggregate([
+      {
+        $match: {
+          userId: objectId,
+          timestamp: { $gte: monthStart }
         }
-      ]),
+      },
+      {
+        $facet: {
+          // Current month paid debit/income transactions grouped by category
+          categoryBreakdown: [
+            {
+              $match: {
+                isPaid: true,
+                paymentMode: { $ne: 'credit' },
+                timestamp: { $lte: monthEnd }
+              }
+            },
+            {
+              $lookup: {
+                from: 'categories',
+                localField: 'category',
+                foreignField: '_id',
+                as: 'cat'
+              }
+            },
+            { $unwind: { path: '$cat', preserveNullAndEmptyArrays: true } },
+            {
+              $group: {
+                _id: {
+                  type: '$type',
+                  categoryId: '$cat._id',
+                  categoryName: { $ifNull: ['$cat.name', 'Sem Categoria'] },
+                  categoryColor: { $ifNull: ['$cat.color', '#757575'] }
+                },
+                total: { $sum: '$value' }
+              }
+            }
+          ],
 
-      // Upcoming unpaid expenses (next 4, from today onwards)
-      Transaction.find({
-        userId: objectId,
-        type: 'debito',
-        isPaid: false,
-        timestamp: { $gte: today }
-      })
-        .populate('category')
-        .sort({ timestamp: 1 })
-        .limit(4)
-        .lean()
+          // Current month credit card expenses grouped by category
+          creditCardBreakdown: [
+            {
+              $match: {
+                type: 'expense',
+                paymentMode: 'credit',
+                timestamp: { $lte: monthEnd }
+              }
+            },
+            {
+              $lookup: {
+                from: 'categories',
+                localField: 'category',
+                foreignField: '_id',
+                as: 'cat'
+              }
+            },
+            { $unwind: { path: '$cat', preserveNullAndEmptyArrays: true } },
+            {
+              $group: {
+                _id: {
+                  categoryId: '$cat._id',
+                  categoryName: { $ifNull: ['$cat.name', 'Sem Categoria'] },
+                  categoryColor: { $ifNull: ['$cat.color', '#757575'] }
+                },
+                total: { $sum: '$value' }
+              }
+            }
+          ],
+
+          // Upcoming unpaid expenses (next 4, from today onwards)
+          upcomingExpenses: [
+            {
+              $match: {
+                type: 'expense',
+                isPaid: false,
+                paymentMode: { $ne: 'credit' },
+                timestamp: { $gte: today }
+              }
+            },
+            { $sort: { timestamp: 1 } },
+            { $limit: 4 },
+            {
+              $lookup: {
+                from: 'categories',
+                localField: 'category',
+                foreignField: '_id',
+                as: 'categoryDoc'
+              }
+            },
+            {
+              $addFields: {
+                category: { $arrayElemAt: ['$categoryDoc', 0] }
+              }
+            },
+            { $project: { categoryDoc: 0 } }
+          ]
+        }
+      }
     ]);
 
-    // Process aggregation into structured response
-    let monthlyExpenses = 0;
+    const { categoryBreakdown, creditCardBreakdown, upcomingExpenses } = result;
+
+    // Process debit/income aggregation
+    let monthlyDebitExpenses = 0;
     let monthlyIncome = 0;
     const expensesByCategory = [];
 
     for (const item of categoryBreakdown) {
-      if (item._id.type === 'debito') {
-        monthlyExpenses += item.total;
+      if (item._id.type === 'expense') {
+        monthlyDebitExpenses += item.total;
         expensesByCategory.push({
           name: item._id.categoryName,
           color: item._id.categoryColor,
@@ -288,11 +370,29 @@ class TransactionService {
       }
     }
 
+    // Process credit card aggregation
+    let monthlyCreditCardTotal = 0;
+    const creditCardByCategory = [];
+
+    for (const item of creditCardBreakdown) {
+      monthlyCreditCardTotal += item.total;
+      creditCardByCategory.push({
+        name: item._id.categoryName,
+        color: item._id.categoryColor,
+        value: item.total
+      });
+    }
+
+    const monthlyExpensesTotal = monthlyDebitExpenses + monthlyCreditCardTotal;
+
     return {
-      monthlyExpenses,
+      monthlyDebitExpenses,
+      monthlyCreditCardTotal,
+      monthlyExpensesTotal,
       monthlyIncome,
-      monthlyBalance: monthlyIncome - monthlyExpenses,
+      monthlyBalance: monthlyIncome - monthlyExpensesTotal,
       expensesByCategory,
+      creditCardByCategory,
       upcomingExpenses
     };
   }
@@ -334,8 +434,15 @@ class TransactionService {
       { runValidators: true, session }
     );
 
-    const newTransactions = await Transaction.find({ _id: { $in: updateIds } }).session(session).populate('category');
-    return { updatedCount: newTransactions.length, oldTransactions: toUpdate, newTransactions };
+    // Compute new state in memory instead of a third DB round-trip.
+    // Only primitive fields (isPaid, paymentMode, value, type) are needed
+    // by the caller for balance delta calculation.
+    const newTransactions = toUpdate.map(tx => {
+      const obj = tx.toObject();
+      return { ...obj, ...updates };
+    });
+
+    return { updatedCount: toUpdate.length, oldTransactions: toUpdate, newTransactions };
   }
 }
 

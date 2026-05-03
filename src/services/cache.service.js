@@ -47,24 +47,35 @@ class CacheService {
   }
 
   /**
-   * Delete all keys matching a pattern.
-   * SCAN instead of KEYS to avoid blocking Redis.
+   * Get the current cache generation for a user's transaction data.
+   * Returns '0' if no generation exists yet.
    */
-  async invalidatePattern(pattern) {
+  async getTxGeneration(userId) {
+    try {
+      const client = redisClient.getClient();
+      if (!redisClient.isConnected) return '0';
+
+      const gen = await client.get(this.keys.userTxGen(userId));
+      return gen || '0';
+    } catch (error) {
+      console.error('Cache GET gen error:', error.message);
+      return '0';
+    }
+  }
+
+  /**
+   * Bump the cache generation for a user's transaction data.
+   * All previously cached transaction/dashboard/summary keys become
+   * orphaned and expire naturally via their TTL.
+   */
+  async bumpTxGeneration(userId) {
     try {
       const client = redisClient.getClient();
       if (!redisClient.isConnected) return;
 
-      let cursor = '0';
-      do {
-        const [nextCursor, keys] = await client.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
-        cursor = nextCursor;
-        if (keys.length > 0) {
-          await client.del(...keys);
-        }
-      } while (cursor !== '0');
+      await client.incr(this.keys.userTxGen(userId));
     } catch (error) {
-      console.error('Cache INVALIDATE error:', error.message);
+      console.error('Cache INCR gen error:', error.message);
     }
   }
 
@@ -75,10 +86,10 @@ class CacheService {
   keys = {
     userProfile: (userId) => `user:${userId}:profile`,
     userCategories: (userId) => `user:${userId}:categories`,
-    userTransactions: (userId, page = 1) => `user:${userId}:transactions:page:${page}`,
-    userMonthlySummary: (userId) => `user:${userId}:transactions:monthly-summary`,
-    userDashboard: (userId) => `user:${userId}:dashboard`,
-    allUserKeys: (userId) => `user:${userId}:*`
+    userTxGen: (userId) => `user:${userId}:txgen`,
+    userTransactions: (userId, gen, filterHash) => `user:${userId}:tx:${gen}:q:${filterHash}`,
+    userMonthlySummary: (userId, gen) => `user:${userId}:tx:${gen}:monthly`,
+    userDashboard: (userId, gen) => `user:${userId}:tx:${gen}:dashboard`,
   };
 
   // ========================
@@ -101,32 +112,57 @@ class CacheService {
     await this.set(this.keys.userCategories(userId), categories, 600); // 10 min
   }
 
-  async getCachedTransactions(userId, page = 1) {
-    return this.get(this.keys.userTransactions(userId, page));
+  /**
+   * Build a deterministic hash from query filters for use as a cache key.
+   * Identical filter combinations produce the same hash.
+   */
+  buildFilterHash(filters = {}) {
+    const parts = [];
+    const keys = Object.keys(filters).sort();
+    for (const key of keys) {
+      if (filters[key] !== undefined && filters[key] !== null && filters[key] !== '') {
+        parts.push(`${key}=${filters[key]}`);
+      }
+    }
+    return parts.length > 0 ? parts.join('&') : 'default';
   }
 
-  async cacheTransactions(userId, page, transactions) {
-    await this.set(this.keys.userTransactions(userId, page), transactions, 120); // 2 min
+  async getCachedTransactions(userId, filters = {}) {
+    const gen = await this.getTxGeneration(userId);
+    const hash = this.buildFilterHash(filters);
+    return this.get(this.keys.userTransactions(userId, gen, hash));
+  }
+
+  async cacheTransactions(userId, filters, transactions) {
+    const gen = await this.getTxGeneration(userId);
+    const hash = this.buildFilterHash(filters);
+    await this.set(this.keys.userTransactions(userId, gen, hash), transactions, 120); // 2 min
   }
 
   async getCachedMonthlySummary(userId) {
-    return this.get(this.keys.userMonthlySummary(userId));
+    const gen = await this.getTxGeneration(userId);
+    return this.get(this.keys.userMonthlySummary(userId, gen));
   }
 
   async cacheMonthlySummary(userId, data) {
-    await this.set(this.keys.userMonthlySummary(userId), data, 300); // 5 min
+    const gen = await this.getTxGeneration(userId);
+    await this.set(this.keys.userMonthlySummary(userId, gen), data, 300); // 5 min
   }
 
   async getCachedDashboard(userId) {
-    return this.get(this.keys.userDashboard(userId));
+    const gen = await this.getTxGeneration(userId);
+    return this.get(this.keys.userDashboard(userId, gen));
   }
 
   async cacheDashboard(userId, data) {
-    await this.set(this.keys.userDashboard(userId), data, 300); // 5 min
+    const gen = await this.getTxGeneration(userId);
+    await this.set(this.keys.userDashboard(userId, gen), data, 300); // 5 min
   }
 
   async invalidateUser(userId) {
-    await this.invalidatePattern(this.keys.allUserKeys(userId));
+    await this.bumpTxGeneration(userId);
+    await this.del(this.keys.userProfile(userId));
+    await this.del(this.keys.userCategories(userId));
     await this.del(`auth:user:${userId}`);
   }
 
@@ -135,8 +171,7 @@ class CacheService {
   }
 
   async invalidateTransactions(userId) {
-    await this.invalidatePattern(`user:${userId}:transactions:*`);
-    await this.del(this.keys.userDashboard(userId));
+    await this.bumpTxGeneration(userId);
   }
 }
 

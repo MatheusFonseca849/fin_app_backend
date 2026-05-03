@@ -1,5 +1,6 @@
 const { body, param, validationResult } = require('express-validator');
 const { TRANSACTION_TYPE_VALUES } = require('../constants/transactionTypes');
+const { PAYMENT_MODE_VALUES } = require('../constants/paymentModes');
 const createError = require('./createError');
 
 // Reusable error handler
@@ -95,6 +96,14 @@ const updateUserValidation = [
     .optional()
     .isBoolean().withMessage('allowForeignCurrency deve ser verdadeiro ou falso'),
 
+  body('preferences.creditCardClosingDay')
+    .optional()
+    .isInt({ min: 1, max: 31 }).withMessage('Dia de fechamento deve ser entre 1 e 31'),
+
+  body('preferences.creditCardDueDay')
+    .optional()
+    .isInt({ min: 1, max: 31 }).withMessage('Dia de vencimento deve ser entre 1 e 31'),
+
   body('currentPassword')
     .if(body('password').exists())
     .notEmpty().withMessage('Senha atual é obrigatória para alterar a senha'),
@@ -127,10 +136,10 @@ const createTransactionValidation = [
     .customSanitizer(value => Math.round(value * 100)), // Convert to cents
   
   body('type')
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "income" ou "expense"'),
   
   body('category')
-    .optional()
+    .notEmpty().withMessage('Categoria é obrigatória')
     .isMongoId().withMessage('ID de categoria inválido'),
   
   body('isRecurrent')
@@ -139,17 +148,22 @@ const createTransactionValidation = [
   
   body('billingDay')
     .optional()
-    .isInt({ min: 1, max: 31 }).withMessage('Dia de cobrança deve ser entre 1 e 31')
-    .custom((value, { req }) => {
-      if (req.body.isRecurrent && !value) {
-        throw new Error('Dia de cobrança é obrigatório para transações recorrentes');
-      }
-      return true;
-    }),
+    .isInt({ min: 1, max: 31 }).withMessage('Dia de cobrança deve ser entre 1 e 31'),
+
+  body('isRecurrent').custom((value, { req }) => {
+    if (value === true && !req.body.billingDay) {
+      throw new Error('Dia de cobrança é obrigatório para transações recorrentes');
+    }
+    return true;
+  }),
   
   body('isPaid')
     .optional()
     .isBoolean().withMessage('Pago deve ser verdadeiro ou falso'),
+
+  body('paymentMode')
+    .optional({ nullable: true })
+    .isIn(PAYMENT_MODE_VALUES).withMessage('Modo de pagamento deve ser "debit" ou "credit"'),
 
   body('date')
     .notEmpty().withMessage('Data é obrigatória')
@@ -175,7 +189,7 @@ const updateTransactionValidation = [
   
   body('type')
     .optional()
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "income" ou "expense"'),
   
   body('category')
     .optional()
@@ -196,6 +210,10 @@ const updateTransactionValidation = [
   body('isPaid')
     .optional()
     .isBoolean().withMessage('isPaid deve ser verdadeiro ou falso'),
+
+  body('paymentMode')
+    .optional({ nullable: true })
+    .isIn([...PAYMENT_MODE_VALUES, null]).withMessage('Modo de pagamento deve ser "debit", "credit" ou null'),
 
   body('date')
     .optional()
@@ -327,7 +345,7 @@ const createCategoryValidation = [
     .escape(),
   
   body('type')
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "income" ou "expense"'),
   
   body('color')
     .optional()
@@ -358,7 +376,7 @@ const updateCategoryValidation = [
   
   body('type')
     .optional()
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "income" ou "expense"'),
   
   body('color')
     .optional()
@@ -431,7 +449,7 @@ const bulkUpdateValidation = [
 
   body('updates.type')
     .optional()
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "income" ou "expense"'),
 
   body('updates.category')
     .optional()
@@ -444,6 +462,10 @@ const bulkUpdateValidation = [
   body('updates.isPaid')
     .optional()
     .isBoolean().withMessage('isPaid deve ser verdadeiro ou falso'),
+
+  body('updates.paymentMode')
+    .optional({ nullable: true })
+    .isIn([...PAYMENT_MODE_VALUES, null]).withMessage('Modo de pagamento deve ser "debit", "credit" ou null'),
 
   body('updates.isRecurrent')
     .optional()
@@ -471,7 +493,7 @@ const importConfirmValidation = [
     .customSanitizer(value => Math.round(value * 100)),
 
   body('transactions.*.type')
-    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "credito" ou "debito"'),
+    .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "income" ou "expense"'),
 
   body('transactions.*.categoryId')
     .isMongoId().withMessage('ID de categoria inválido'),
@@ -483,6 +505,15 @@ const importConfirmValidation = [
   body('transactions.*.isPaid')
     .optional()
     .isBoolean().withMessage('isPaid deve ser verdadeiro ou falso'),
+
+  body('transactions.*.paymentMode')
+    .optional({ nullable: true })
+    .isIn(PAYMENT_MODE_VALUES).withMessage('Modo de pagamento deve ser "debit" ou "credit"'),
+
+  body('transactions.*.source')
+    .optional({ nullable: true })
+    .isString().withMessage('Fonte deve ser uma string')
+    .isLength({ max: 100 }).withMessage('Fonte muito longa'),
 
   handleValidationErrors
 ];

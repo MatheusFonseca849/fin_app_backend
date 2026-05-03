@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const { TRANSACTION_TYPE_VALUES } = require('../../constants/transactionTypes');
+const { PAYMENT_MODE_VALUES } = require('../../constants/paymentModes');
 
 const transactionSchema = new mongoose.Schema({
   userId: {
@@ -24,7 +25,15 @@ const transactionSchema = new mongoose.Schema({
     required: [true, 'Tipo é obrigatório'],
     enum: {
       values: TRANSACTION_TYPE_VALUES,
-      message: 'Tipo deve ser "credito" ou "debito"'
+      message: 'Tipo deve ser "income" ou "expense"'
+    }
+  },
+  paymentMode: {
+    type: String,
+    default: null,
+    enum: {
+      values: [...PAYMENT_MODE_VALUES, null],
+      message: 'Modo de pagamento deve ser "debit", "credit" ou null'
     }
   },
   category: {
@@ -51,6 +60,12 @@ const transactionSchema = new mongoose.Schema({
       },
       message: 'Dia de cobrança é obrigatório para transações recorrentes'
     }
+  },
+  source: {
+    type: String,
+    default: null,
+    trim: true,
+    maxlength: [100, 'Fonte muito longa']
   },
   isPaid: {
     type: Boolean,
@@ -86,6 +101,7 @@ transactionSchema.index({ userId: 1, timestamp: -1 });
 transactionSchema.index({ userId: 1, isRecurrent: 1 });
 transactionSchema.index({ userId: 1, category: 1 });
 transactionSchema.index({ isRecurrent: 1, isActive: 1, billingDay: 1 });
+transactionSchema.index({ userId: 1, paymentMode: 1, isPaid: 1 });
 
 const Transaction = mongoose.model('Transaction', transactionSchema);
 

@@ -2,6 +2,8 @@ const Category = require('../models/schemas/category.schema');
 const { TRANSACTION_TYPES } = require('../constants/transactionTypes');
 const AppError = require('../utils/AppError');
 
+const MAX_CATEGORIES_PER_USER = 150;
+
 class CategoryService {
 
   // ============================================
@@ -9,7 +11,7 @@ class CategoryService {
   // ============================================
 
   async getCategories(userId) {
-    return await Category.find({ userId }).sort({ type: 1, name: 1 });
+    return await Category.find({ userId }).sort({ type: 1, name: 1 }).limit(MAX_CATEGORIES_PER_USER);
   }
 
   async getCategoryById(userId, categoryId) {
@@ -23,6 +25,11 @@ class CategoryService {
   async addCategory(userId, data) {
     const exists = await Category.findOne({ userId, name: data.name });
     if (exists) throw new AppError(409, 'Categoria já existe');
+
+    const count = await Category.countDocuments({ userId });
+    if (count >= MAX_CATEGORIES_PER_USER) {
+      throw new AppError(400, `Limite de ${MAX_CATEGORIES_PER_USER} categorias atingido`);
+    }
 
     const category = new Category({ ...data, userId });
     return await category.save();
@@ -45,7 +52,7 @@ class CategoryService {
     const created = new Category({
       userId,
       name: 'Sem Categoria',
-      type: TRANSACTION_TYPES.DEBIT,
+      type: TRANSACTION_TYPES.EXPENSE,
       color: '#D5DBDB',
     });
     return await created.save({ session });
@@ -71,15 +78,15 @@ class CategoryService {
 
   async createDefaultCategories(userId) {
     const defaults = [
-      { name: 'Alimentação', type: TRANSACTION_TYPES.DEBIT, color: '#FF6B6B' },
-      { name: 'Transporte', type: TRANSACTION_TYPES.DEBIT, color: '#4ECDC4' },
-      { name: 'Saúde', type: TRANSACTION_TYPES.DEBIT, color: '#45B7D1' },
-      { name: 'Contas', type: TRANSACTION_TYPES.DEBIT, color: '#FFA07A' },
-      { name: 'Lazer', type: TRANSACTION_TYPES.DEBIT, color: '#98D8C8' },
-      { name: 'Outros', type: TRANSACTION_TYPES.DEBIT, color: '#F7DC6F' },
-      { name: 'Salário', type: TRANSACTION_TYPES.CREDIT, color: '#82E0AA' },
-      { name: 'Freelance', type: TRANSACTION_TYPES.CREDIT, color: '#AED6F1' },
-      { name: 'Sem Categoria', type: TRANSACTION_TYPES.DEBIT, color: '#D5DBDB' }
+      { name: 'Alimentação', type: TRANSACTION_TYPES.EXPENSE, color: '#FF6B6B' },
+      { name: 'Transporte', type: TRANSACTION_TYPES.EXPENSE, color: '#4ECDC4' },
+      { name: 'Saúde', type: TRANSACTION_TYPES.EXPENSE, color: '#45B7D1' },
+      { name: 'Contas', type: TRANSACTION_TYPES.EXPENSE, color: '#FFA07A' },
+      { name: 'Lazer', type: TRANSACTION_TYPES.EXPENSE, color: '#98D8C8' },
+      { name: 'Outros', type: TRANSACTION_TYPES.EXPENSE, color: '#F7DC6F' },
+      { name: 'Salário', type: TRANSACTION_TYPES.INCOME, color: '#82E0AA' },
+      { name: 'Freelance', type: TRANSACTION_TYPES.INCOME, color: '#AED6F1' },
+      { name: 'Sem Categoria', type: TRANSACTION_TYPES.EXPENSE, color: '#D5DBDB' }
     ];
 
     const docs = defaults.map(d => ({ ...d, userId }));

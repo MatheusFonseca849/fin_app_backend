@@ -108,6 +108,18 @@ const userSchema = new mongoose.Schema({
     allowForeignCurrency: {
       type: Boolean,
       default: false
+    },
+    creditCardClosingDay: {
+      type: Number,
+      default: 1,
+      min: [1, 'Dia de fechamento deve ser entre 1 e 31'],
+      max: [31, 'Dia de fechamento deve ser entre 1 e 31']
+    },
+    creditCardDueDay: {
+      type: Number,
+      default: 1,
+      min: [1, 'Dia de vencimento deve ser entre 1 e 31'],
+      max: [31, 'Dia de vencimento deve ser entre 1 e 31']
     }
   }
 }, {
