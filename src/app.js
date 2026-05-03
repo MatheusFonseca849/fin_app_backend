@@ -73,7 +73,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '100kb' }));
+app.use(express.json({ limit: '256kb' }));
 app.use(cookieParser());
 app.use(requestLogger);
 app.use(csrfProtection);
@@ -81,7 +81,6 @@ app.use(csrfProtection);
 // Apply strict rate limiting to auth endpoints only
 app.use('/api/v1/users/login', authLimiter);
 app.use('/api/v1/users/register', authLimiter);
-app.use('/api/v1/users/forgot-password', authLimiter);
 app.use('/api/v1/users/reset-password', authLimiter);
 app.use('/api/v1/users/verify-email-change', authLimiter);
 app.use('/api/v1/users/refresh', authLimiter);
@@ -100,8 +99,6 @@ app.use('/api/v1/admin', apiLimiter, adminRouter);
 if (process.env.NODE_ENV === 'development') {
   app.get('/test-env', (req, res) => {
     res.json({
-      hasAccessSecret: !!process.env.JWT_ACCESS_SECRET,
-      hasRefreshSecret: !!process.env.JWT_REFRESH_SECRET,
       nodeEnv: process.env.NODE_ENV,
       clientUrl: process.env.CLIENT_URL
     });

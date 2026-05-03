@@ -27,7 +27,11 @@ class TransactionService {
     if (startDate || endDate) {
       filter.timestamp = {};
       if (startDate) filter.timestamp.$gte = startDate;
-      if (endDate) filter.timestamp.$lte = endDate;
+      if (endDate) {
+        const endOfDay = new Date(endDate);
+        endOfDay.setUTCHours(23, 59, 59, 999);
+        filter.timestamp.$lte = endOfDay;
+      }
     }
 
     const [data, total] = await Promise.all([
@@ -48,7 +52,11 @@ class TransactionService {
     if (startDate || endDate) {
       filter.timestamp = {};
       if (startDate) filter.timestamp.$gte = startDate;
-      if (endDate) filter.timestamp.$lte = endDate;
+      if (endDate) {
+        const endOfDay = new Date(endDate);
+        endOfDay.setUTCHours(23, 59, 59, 999);
+        filter.timestamp.$lte = endOfDay;
+      }
     }
 
     return await Transaction.find(filter)
@@ -94,29 +102,39 @@ class TransactionService {
   }
 
   async bulkAddTransactions(userId, transactions, { session } = {}) {
-    // Build date range from incoming transactions for scoped query
-    const timestamps = transactions.map(tx => tx.timestamp);
-    const minDate = new Date(Math.min(...timestamps.map(d => d.getTime())));
-    const maxDate = new Date(Math.max(...timestamps.map(d => d.getTime())));
+    // Single-pass date range — avoids spreading into Math.min/max which
+    // overflows the call stack on large arrays (SCALE-3).
+    let minTs = Infinity;
+    let maxTs = -Infinity;
+    for (const tx of transactions) {
+      const t = tx.timestamp.getTime();
+      if (t < minTs) minTs = t;
+      if (t > maxTs) maxTs = t;
+    }
+    const minDate = new Date(minTs);
+    const maxDate = new Date(maxTs);
     minDate.setHours(0, 0, 0, 0);
     maxDate.setHours(23, 59, 59, 999);
 
-    // Fetch existing transactions within the date range
-    const existingQuery = Transaction.find({
-      userId,
-      timestamp: { $gte: minDate, $lte: maxDate }
-    });
-    if (session) existingQuery.session(session);
-    const existing = await existingQuery.lean();
-
-    // Build a Set of fingerprints for fast lookup
+    // Build fingerprint Set incrementally via cursor to avoid
+    // materialising all existing transactions in memory at once.
     const fingerprint = (tx) => {
       const d = new Date(tx.timestamp);
       const catId = tx.category?._id?.toString?.() || tx.category?.toString?.() || '';
       return `${tx.description}|${tx.value}|${tx.type}|${catId}|${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
     };
 
-    const existingSet = new Set(existing.map(fingerprint));
+    const existingQuery = Transaction.find({
+      userId,
+      timestamp: { $gte: minDate, $lte: maxDate }
+    }).lean();
+    if (session) existingQuery.session(session);
+
+    const existingSet = new Set();
+    const cursor = existingQuery.cursor();
+    for await (const doc of cursor) {
+      existingSet.add(fingerprint(doc));
+    }
 
     // Partition into new vs duplicate
     const newTransactions = [];
@@ -138,45 +156,43 @@ class TransactionService {
       };
     }
 
-    const docs = newTransactions.map(txData => ({ ...txData, userId }));
+    // Chunk inserts into batches to bound peak memory and stay
+    // under MongoDB's 16 MB BSON document-size limit per operation.
+    const BATCH_SIZE = 500;
+    const allInserted = [];
+    const allErrors = [];
 
-    // Inside a transaction all writes are atomic — use ordered:true (default).
-    // Without a session, ordered:false allows partial inserts to succeed.
-    if (session) {
-      const result = await Transaction.insertMany(docs, { session });
-      return {
-        createdCount: result.length,
-        insertedDocs: result,
-        skippedCount,
-        errorCount: 0,
-        errors: []
-      };
+    for (let i = 0; i < newTransactions.length; i += BATCH_SIZE) {
+      const batch = newTransactions.slice(i, i + BATCH_SIZE).map(txData => ({ ...txData, userId }));
+
+      if (session) {
+        const result = await Transaction.insertMany(batch, { session });
+        allInserted.push(...result);
+      } else {
+        try {
+          const result = await Transaction.insertMany(batch, { ordered: false });
+          allInserted.push(...result);
+        } catch (error) {
+          if (error.insertedDocs) allInserted.push(...error.insertedDocs);
+          if (error.writeErrors) {
+            for (const e of error.writeErrors) {
+              allErrors.push({
+                transaction: batch[e.index],
+                error: e.errmsg || e.message
+              });
+            }
+          }
+        }
+      }
     }
 
-    try {
-      const result = await Transaction.insertMany(docs, { ordered: false });
-      return {
-        createdCount: result.length,
-        insertedDocs: result,
-        skippedCount,
-        errorCount: 0,
-        errors: []
-      };
-    } catch (error) {
-      const insertedDocs = error.insertedDocs || [];
-      const errorDetails = (error.writeErrors || []).map(e => ({
-        transaction: docs[e.index],
-        error: e.errmsg || e.message
-      }));
-
-      return {
-        createdCount: insertedDocs.length,
-        insertedDocs,
-        skippedCount,
-        errorCount: errorDetails.length,
-        errors: errorDetails
-      };
-    }
+    return {
+      createdCount: allInserted.length,
+      insertedDocs: allInserted,
+      skippedCount,
+      errorCount: allErrors.length,
+      errors: allErrors
+    };
   }
 
   // ============================================
@@ -193,7 +209,7 @@ class TransactionService {
 
     if (months) {
       const cutoff = new Date();
-      cutoff.setMonth(cutoff.getMonth() - months);
+      cutoff.setMonth(cutoff.getMonth() - (months - 1));
       cutoff.setDate(1);
       cutoff.setHours(0, 0, 0, 0);
       match.timestamp = { $gte: cutoff };

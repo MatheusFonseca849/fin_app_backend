@@ -29,8 +29,8 @@ const parseStrictDate = (str) => {
 const getAll = async (req, res) => {
   try {
     const { page, limit, type, category, isRecurrent, isPaid, paymentMode, startDate, endDate } = req.query;
-    const pageNum = page ? parseInt(page) : 1;
-    const limitNum = limit ? parseInt(limit) : 50;
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 50));
     if (isNaN(pageNum) || isNaN(limitNum)) {
       return res.status(400).json(createError(400, 'page e limit devem ser números válidos'));
     }
@@ -135,11 +135,11 @@ const getMonthlySummary = async (req, res) => {
     const hasMonthsFilter = months !== undefined;
     if (hasMonthsFilter) {
       if (typeof months !== 'string') {
-        return res.status(400).json(createError(400, 'months deve ser um número válido entre 1 e 24'));
+        return res.status(400).json(createError(400, 'months deve ser um número válido entre 1 e 120'));
       }
       opts.months = parseInt(months);
-      if (isNaN(opts.months) || opts.months < 1 || opts.months > 24) {
-        return res.status(400).json(createError(400, 'months deve ser um número válido entre 1 e 24'));
+      if (isNaN(opts.months) || opts.months < 1 || opts.months > 120) {
+        return res.status(400).json(createError(400, 'months deve ser um número válido entre 1 e 120'));
       }
     }
 

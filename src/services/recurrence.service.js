@@ -87,8 +87,9 @@ class RecurrenceService {
     const periodStart = new Date(currentYear, currentMonth, 1);
     const now = new Date();
 
-    // Find all active recurrent transactions matching today's billingDay
-    const recurrents = await Transaction.find({
+    // Cursor-based iteration — streams documents one at a time instead of
+    // loading all matching recurrents into memory at once (SCALE-1).
+    const cursor = Transaction.find({
       isRecurrent: true,
       isActive: true,
       billingDay: currentDay,
@@ -96,18 +97,15 @@ class RecurrenceService {
         { lastApplied: null },
         { lastApplied: { $lt: periodStart } }
       ]
-    });
-
-    if (recurrents.length === 0) {
-      console.log('✅ [Recurrence] No recurrences to apply today.');
-      return 0;
-    }
+    }).cursor();
 
     // Process each recurrent atomically — failures are isolated per recurrence
     let successCount = 0;
+    let totalCount = 0;
     const affectedUserIds = new Set();
 
-    for (const recurrent of recurrents) {
+    for await (const recurrent of cursor) {
+      totalCount++;
       try {
         await this.processSingleRecurrence(recurrent, now);
         successCount++;
@@ -117,6 +115,11 @@ class RecurrenceService {
         // so it will be retried on the next run. No duplicate, no data loss.
         console.error(`❌ [Recurrence] Failed for recurrence ${recurrent._id}: ${error.message}`);
       }
+    }
+
+    if (totalCount === 0) {
+      console.log('✅ [Recurrence] No recurrences to apply today.');
+      return 0;
     }
 
     // Invalidate caches for all affected users
@@ -129,7 +132,7 @@ class RecurrenceService {
       }
     }
 
-    console.log(`✅ [Recurrence] Done. Created ${successCount} transaction(s) from ${recurrents.length} recurrence(s).`);
+    console.log(`✅ [Recurrence] Done. Created ${successCount} transaction(s) from ${totalCount} recurrence(s).`);
     return successCount;
   }
 }

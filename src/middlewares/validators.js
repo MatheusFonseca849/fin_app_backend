@@ -139,7 +139,7 @@ const createTransactionValidation = [
     .isIn(TRANSACTION_TYPE_VALUES).withMessage('Tipo deve ser "income" ou "expense"'),
   
   body('category')
-    .optional()
+    .notEmpty().withMessage('Categoria é obrigatória')
     .isMongoId().withMessage('ID de categoria inválido'),
   
   body('isRecurrent')
@@ -148,13 +148,14 @@ const createTransactionValidation = [
   
   body('billingDay')
     .optional()
-    .isInt({ min: 1, max: 31 }).withMessage('Dia de cobrança deve ser entre 1 e 31')
-    .custom((value, { req }) => {
-      if (req.body.isRecurrent && !value) {
-        throw new Error('Dia de cobrança é obrigatório para transações recorrentes');
-      }
-      return true;
-    }),
+    .isInt({ min: 1, max: 31 }).withMessage('Dia de cobrança deve ser entre 1 e 31'),
+
+  body('isRecurrent').custom((value, { req }) => {
+    if (value === true && !req.body.billingDay) {
+      throw new Error('Dia de cobrança é obrigatório para transações recorrentes');
+    }
+    return true;
+  }),
   
   body('isPaid')
     .optional()
