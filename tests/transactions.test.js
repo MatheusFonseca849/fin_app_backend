@@ -404,12 +404,18 @@ describe('Transaction Endpoints', () => {
       expect(res.body).toHaveProperty('expensesByCategory');
       expect(res.body).toHaveProperty('creditCardByCategory');
       expect(res.body).toHaveProperty('upcomingExpenses');
+      expect(res.body).toHaveProperty('pendingExpensesTotal');
+      expect(res.body).toHaveProperty('pendingExpensesCount');
+      expect(res.body).toHaveProperty('monthlyRecurringExpenses');
       expect(res.body.monthlyDebitExpenses).toBe(5000);
       expect(res.body.monthlyIncome).toBe(100000);
       expect(Array.isArray(res.body.expensesByCategory)).toBe(true);
       expect(Array.isArray(res.body.upcomingExpenses)).toBe(true);
       expect(res.body.upcomingExpenses.length).toBe(1);
       expect(res.body.upcomingExpenses[0].description).toBe('Upcoming bill');
+      expect(res.body.pendingExpensesTotal).toBe(3000);
+      expect(res.body.pendingExpensesCount).toBe(1);
+      expect(res.body.monthlyRecurringExpenses).toBe(0);
     });
 
     it('should return empty data when no transactions exist', async () => {
@@ -422,6 +428,9 @@ describe('Transaction Endpoints', () => {
       expect(res.body.monthlyCreditCardTotal).toBe(0);
       expect(res.body.monthlyIncome).toBe(0);
       expect(res.body.upcomingExpenses).toEqual([]);
+      expect(res.body.pendingExpensesTotal).toBe(0);
+      expect(res.body.pendingExpensesCount).toBe(0);
+      expect(res.body.monthlyRecurringExpenses).toBe(0);
     });
 
     it('should separate debit and credit card expenses', async () => {

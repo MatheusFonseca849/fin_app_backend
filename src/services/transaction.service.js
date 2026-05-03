@@ -247,9 +247,11 @@ class TransactionService {
     const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
     const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
-    // Single $facet aggregation replaces 3 parallel queries.
-    // One index scan on { userId, timestamp } feeds all three sub-pipelines.
-    const [result] = await Transaction.aggregate([
+    // Two parallel queries:
+    // 1. $facet aggregation for current-month data (one index scan feeds four sub-pipelines)
+    // 2. Separate query for recurring expense templates (timestamps fall outside the month window)
+    const [facetResults, recurringResults] = await Promise.all([
+      Transaction.aggregate([
       {
         $match: {
           userId: objectId,
@@ -345,12 +347,57 @@ class TransactionService {
               }
             },
             { $project: { categoryDoc: 0 } }
+          ],
+
+          // All unpaid debit expenses this month (count + total, no limit)
+          pendingExpensesSummary: [
+            {
+              $match: {
+                type: 'expense',
+                isPaid: false,
+                paymentMode: { $ne: 'credit' },
+                timestamp: { $lte: monthEnd }
+              }
+            },
+            {
+              $group: {
+                _id: null,
+                total: { $sum: '$value' },
+                count: { $sum: 1 }
+              }
+            }
           ]
         }
       }
+    ]),
+
+      // Active recurring expense templates (timestamps outside the month window)
+      Transaction.aggregate([
+        {
+          $match: {
+            userId: objectId,
+            isRecurrent: true,
+            isActive: true,
+            type: 'expense'
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$value' }
+          }
+        }
+      ])
     ]);
 
-    const { categoryBreakdown, creditCardBreakdown, upcomingExpenses } = result;
+    const result = facetResults[0];
+    const { categoryBreakdown, creditCardBreakdown, upcomingExpenses, pendingExpensesSummary } = result;
+
+    // Pending expenses summary
+    const pendingSummary = pendingExpensesSummary[0] || { total: 0, count: 0 };
+
+    // Recurring expenses total
+    const monthlyRecurringExpenses = recurringResults[0]?.total ?? 0;
 
     // Process debit/income aggregation
     let monthlyDebitExpenses = 0;
@@ -393,7 +440,10 @@ class TransactionService {
       monthlyBalance: monthlyIncome - monthlyExpensesTotal,
       expensesByCategory,
       creditCardByCategory,
-      upcomingExpenses
+      upcomingExpenses,
+      pendingExpensesTotal: pendingSummary.total,
+      pendingExpensesCount: pendingSummary.count,
+      monthlyRecurringExpenses
     };
   }
 
