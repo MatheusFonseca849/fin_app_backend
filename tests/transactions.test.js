@@ -1047,6 +1047,7 @@ describe('Transaction Endpoints', () => {
         expect(res.body.data[0]).toHaveProperty('year');
         expect(res.body.data[0]).toHaveProperty('month');
         expect(res.body.data[0]).toHaveProperty('expenses');
+        expect(res.body.data[0]).toHaveProperty('creditCardTotal');
         expect(res.body.data[0]).toHaveProperty('income');
         expect(res.body.data[0]).toHaveProperty('balance');
       }

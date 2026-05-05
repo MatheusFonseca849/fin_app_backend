@@ -226,6 +226,9 @@ class TransactionService {
           expenses: {
             $sum: { $cond: [{ $eq: ['$type', 'expense'] }, '$value', 0] }
           },
+          creditCardTotal: {
+            $sum: { $cond: [{ $and: [{ $eq: ['$type', 'expense'] }, { $eq: ['$paymentMode', 'credit'] }] }, '$value', 0] }
+          },
           income: {
             $sum: { $cond: [{ $eq: ['$type', 'income'] }, '$value', 0] }
           }
