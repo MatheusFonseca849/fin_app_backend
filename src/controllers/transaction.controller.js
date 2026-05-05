@@ -143,11 +143,8 @@ const getMonthlySummary = async (req, res) => {
       }
     }
 
-    // Serve from cache when fetching the full (unfiltered) summary
-    if (!hasMonthsFilter) {
-      const cached = await cacheService.getCachedMonthlySummary(req.user.id);
-      if (cached) return res.json(cached);
-    }
+    const cached = await cacheService.getCachedMonthlySummary(req.user.id, opts.months);
+    if (cached) return res.json(cached);
 
     const raw = await transactionService.getMonthlyAggregation(req.user.id, opts);
 
@@ -155,15 +152,13 @@ const getMonthlySummary = async (req, res) => {
       year: r._id.year,
       month: r._id.month,
       expenses: r.expenses,
+      creditCardTotal: r.creditCardTotal,
       income: r.income,
       balance: r.income - r.expenses
     }));
 
     const response = { data };
-
-    if (!hasMonthsFilter) {
-      await cacheService.cacheMonthlySummary(req.user.id, response);
-    }
+    await cacheService.cacheMonthlySummary(req.user.id, opts.months, response);
 
     res.json(response);
   } catch (error) {

@@ -88,7 +88,7 @@ class CacheService {
     userCategories: (userId) => `user:${userId}:categories`,
     userTxGen: (userId) => `user:${userId}:txgen`,
     userTransactions: (userId, gen, filterHash) => `user:${userId}:tx:${gen}:q:${filterHash}`,
-    userMonthlySummary: (userId, gen) => `user:${userId}:tx:${gen}:monthly`,
+    userMonthlySummary: (userId, gen, months) => `user:${userId}:tx:${gen}:monthly:${months || 'all'}`,
     userDashboard: (userId, gen) => `user:${userId}:tx:${gen}:dashboard`,
   };
 
@@ -139,14 +139,14 @@ class CacheService {
     await this.set(this.keys.userTransactions(userId, gen, hash), transactions, 120); // 2 min
   }
 
-  async getCachedMonthlySummary(userId) {
+  async getCachedMonthlySummary(userId, months) {
     const gen = await this.getTxGeneration(userId);
-    return this.get(this.keys.userMonthlySummary(userId, gen));
+    return this.get(this.keys.userMonthlySummary(userId, gen, months));
   }
 
-  async cacheMonthlySummary(userId, data) {
+  async cacheMonthlySummary(userId, months, data) {
     const gen = await this.getTxGeneration(userId);
-    await this.set(this.keys.userMonthlySummary(userId, gen), data, 300); // 5 min
+    await this.set(this.keys.userMonthlySummary(userId, gen, months), data, 300); // 5 min
   }
 
   async getCachedDashboard(userId) {
